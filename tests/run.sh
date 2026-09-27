@@ -128,7 +128,8 @@ t_lane_full_window_with_credits_runs() {
 }
 t_lane_that_commits_is_not_a_refusal() {
   FAKE_CODEX_MODE=commit in_proj af-lane routine "$SPEC"
-  code 0 && has "STATUS: complete" && has "the lane committed" && has "created-by-fake.txt"
+  code 0 && has "STATUS: complete" && has "the lane committed" && has "created-by-fake.txt" || return 1
+  printf '%s' "$OUT" | grep -qE '^  commit [0-9a-f]{12}\.\.[0-9a-f]{12} ' || fail "commit line should show the full short range"
 }
 t_lane_tight_budget_warns() {
   FAKE_CODEX_USED5H=90 in_proj af-lane routine "$SPEC"

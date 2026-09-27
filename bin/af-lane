@@ -101,7 +101,7 @@ DURATION=$(( $(date +%s) - START ))
 
 af_py snapshot "$ROOT" > "$WORK/after.snap"
 CHANGED="$(af_py changed "$WORK/before.snap" "$WORK/after.snap")"
-CHANGED_COUNT=0; [ -n "$CHANGED" ] && CHANGED_COUNT="$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
+CHANGED_COUNT=0; [ -n "$CHANGED" ] && CHANGED_COUNT="$(printf '%s\n' "$CHANGED" | grep -vc '^commit ')"
 STATUS="complete"; EXIT=0
 if grep -q '^# lane: timeout' "$LOG"; then STATUS="timeout"; EXIT=5
 elif [ "$RC" -ne 0 ]; then STATUS="failed"; EXIT=1

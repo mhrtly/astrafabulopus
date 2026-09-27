@@ -84,6 +84,12 @@ class Evaluation(unittest.TestCase):
         self.assertEqual(ev["level"], "tight")
         self.assertIn("credits", ev["reason"])
 
+    def test_current_limit_flag_is_not_softened_by_credits(self):
+        s = self.snap(100)
+        s["limit_reached"] = "rate_limit_reached"
+        s["credits"] = {"has_credits": True, "balance": "12"}
+        self.assertEqual(pantry.evaluate(s)["level"], "empty")
+
     def test_staleness(self):
         self.assertTrue(pantry.evaluate(self.snap(10, observed_ago=13 * 3600, resets_in=90000))["stale"])
 

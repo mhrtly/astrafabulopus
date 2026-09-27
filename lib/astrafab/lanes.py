@@ -162,15 +162,14 @@ def cmd_changed(args):
     # a lane that commits its own work (specs say not to, but) still changed things
     if mb.get("head") and ma.get("head") and mb["head"] != ma["head"] and ma["head"] != "none":
         root = ma.get("root") or "."
-        rng = ma["head"] if mb["head"] == "none" else "%s..%s" % (mb["head"], ma["head"])
-        print("commit %s (the lane committed; specs say it should not)" % rng[:40])
+        rng = ma["head"][:12] if mb["head"] == "none" else "%s..%s" % (mb["head"][:12], ma["head"][:12])
+        print("commit %s (the lane committed; specs say it should not)" % rng)
         try:
             if mb["head"] == "none":
-                names = subprocess.run(["git", "-C", root, "show", "--pretty=", "--name-only", ma["head"]],
-                                       capture_output=True, text=True, timeout=60).stdout.split()
+                cmd = ["git", "-C", root, "show", "--pretty=", "--name-only", "-z", ma["head"]]
             else:
-                names = subprocess.run(["git", "-C", root, "diff", "--name-only", mb["head"], ma["head"]],
-                                       capture_output=True, text=True, timeout=60).stdout.split()
+                cmd = ["git", "-C", root, "diff", "--name-only", "-z", mb["head"], ma["head"]]
+            names = [n for n in subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout.split("\0") if n]
         except (OSError, subprocess.SubprocessError):
             names = []
         listed = {p for _, p in rows}

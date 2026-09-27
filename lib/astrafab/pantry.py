@@ -371,6 +371,7 @@ def evaluate(snap, at=None):
         if lv != "plenty":
             reasons.append("%s %.0f%% used%s" % (w["name"], eff, (
                 ", resets %s" % core.local_clock(resets)) if resets and not w["reset_since_reading"] else ""))
+    flag_is_current = False
     if snap.get("limit_reached"):
         # Only a current reading can empty a sack. After a reset (or once the reading is stale) the
         # flag is history: say so, but let the next lane run find out, since that run is also what
@@ -380,10 +381,12 @@ def evaluate(snap, at=None):
             reasons.insert(0, "limit was reached (%s) at the last reading; unconfirmed since" % snap["limit_reached"])
         else:
             levels.append("empty")
+            flag_is_current = True
             reasons.insert(0, "limit reached (%s)" % snap["limit_reached"])
     credits = snap.get("credits") if isinstance(snap.get("credits"), dict) else {}
-    if "empty" in levels and (credits.get("unlimited") or credits.get("has_credits")):
-        # a full window with credits on the account keeps running, on credits
+    if not flag_is_current and "empty" in levels and (credits.get("unlimited") or credits.get("has_credits")):
+        # a full window with credits on the account keeps running, on credits (unless Codex itself
+        # says the stop is real right now, which it would not if the credits were carrying it)
         levels = ["tight" if lv == "empty" else lv for lv in levels]
         for w in snap.get("windows", []):
             if w.get("level") == "empty":
