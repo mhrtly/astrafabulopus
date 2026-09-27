@@ -60,7 +60,9 @@ Each window gets a level. A sack takes the level of its worst window.
 
 **Pace.** Here's an example. You've used 50% of a five-hour window, and only a quarter of it has elapsed. That's on pace for 200% at the reset, and you'll run dry in about 75 minutes. The Pantry projects usage once 15% of a window has elapsed (earlier projections are noise) and prints `at this pace: dry in …` when you'll hit the wall before the reset.
 
-**Resets.** A reading whose window has since reset counts as 0% used. The sack refilled; the reading is just old. Readings older than 6 hours (Claude), 12 hours (Codex) or a day (manual) are marked `STALE`.
+**Resets.** A reading whose window has since reset counts as 0% used. The sack refilled; the reading is just old. The same goes for Codex's "limit reached" flag. Once the window has reset, or the reading has gone stale, the flag only makes the sack tight, not empty, because the next lane run is also what records a fresh reading, and blocking it would keep the sack "empty" forever.
+
+**Credits.** A full window on an account with purchased credits (`credits.has_credits`) keeps running on the credits, so it reads tight, with the balance, rather than empty. Readings older than 6 hours (Claude), 12 hours (Codex) or a day (manual) are marked `STALE`.
 
 ## What changes when a sack runs low
 

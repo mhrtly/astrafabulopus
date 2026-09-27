@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -82,6 +83,11 @@ def snapshot(root):
         out = None
     entries = {}
     if out is not None and out.returncode == 0:
+        try:
+            head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+            entries["#head"] = ("#", head.stdout.strip() if head.returncode == 0 else "none")
+        except (OSError, subprocess.SubprocessError):
+            pass
         items = out.stdout.decode("utf-8", "surrogateescape").split("\0")
         i = 0
         while i < len(items):
@@ -109,19 +115,27 @@ def snapshot(root):
 
 def cmd_snapshot(args):
     entries, kind = snapshot(args.root)
-    sys.stdout.write("#kind\t%s\n" % kind)
+    sys.stdout.write("#kind\t%s\n#root\t%s\n" % (kind, args.root))
+    head = entries.pop("#head", None)
+    if head:
+        sys.stdout.write("#head\t%s\n" % head[1])
     for path in sorted(entries):
         xy, h = entries[path]
         sys.stdout.write("%s\t%s\t%s\n" % (xy, h, path))
     return 0
 
 
-def _read_snapshot(path):
+def _read_snapshot(path, meta=None):
     entries = {}
     with open(path) as fh:
         for line in fh:
             line = line.rstrip("\n")
-            if not line or line.startswith("#"):
+            if line.startswith("#"):
+                if meta is not None and "\t" in line:
+                    k, v = line[1:].split("\t", 1)
+                    meta[k] = v
+                continue
+            if not line:
                 continue
             parts = line.split("\t", 2)
             if len(parts) == 3:
@@ -143,22 +157,54 @@ def changed(before, after):
 
 
 def cmd_changed(args):
-    for status, path in changed(_read_snapshot(args.before), _read_snapshot(args.after)):
+    mb, ma = {}, {}
+    rows = changed(_read_snapshot(args.before, mb), _read_snapshot(args.after, ma))
+    # a lane that commits its own work (specs say not to, but) still changed things
+    if mb.get("head") and ma.get("head") and mb["head"] != ma["head"] and ma["head"] != "none":
+        root = ma.get("root") or "."
+        rng = ma["head"] if mb["head"] == "none" else "%s..%s" % (mb["head"], ma["head"])
+        print("commit %s (the lane committed; specs say it should not)" % rng[:40])
+        try:
+            if mb["head"] == "none":
+                names = subprocess.run(["git", "-C", root, "show", "--pretty=", "--name-only", ma["head"]],
+                                       capture_output=True, text=True, timeout=60).stdout.split()
+            else:
+                names = subprocess.run(["git", "-C", root, "diff", "--name-only", mb["head"], ma["head"]],
+                                       capture_output=True, text=True, timeout=60).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            names = []
+        listed = {p for _, p in rows}
+        for name in names:
+            if name not in listed:
+                print("%-5s %s" % ("C", name))
+    for status, path in rows:
         print("%-5s %s" % (status, path))
     return 0
 
 
 # ---------------------------------------------------------------- efforts
 
+def _names(mid, m):
+    return [mid, m.get("slug")] + list(m.get("aliases") or [])
+
+
 def find_model(models_cfg, key):
+    """Exact id, slug or alias first; then forgiving: Claude Code reports ids like
+    'claude-opus-5-5[1m]' or dated ones like 'claude-haiku-4-5-20251001'."""
     models = (models_cfg or {}).get("models", {})
+    if not key:
+        return None, None
     if key in models:
         return key, models[key]
     for mid, m in models.items():
-        if not isinstance(m, dict):
-            continue
-        if key == m.get("slug") or key in (m.get("aliases") or []):
+        if isinstance(m, dict) and key in _names(mid, m):
             return mid, m
+    norm = re.sub(r"\[.*?\]$", "", key.strip().lower())
+    norm = re.sub(r"-\d{8}$", "", norm)
+    for mid, m in models.items():
+        if isinstance(m, dict) and norm in [n.lower() for n in _names(mid, m) if n]:
+            return mid, m
+    # No prefix guessing: 'gpt-6-luna-pro' is a different model, not a Luna with a hat on.
     return None, None
 
 

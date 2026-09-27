@@ -20,6 +20,7 @@ setup() {
   export PATH="$REPO/tests/fakes:$REPO/bin:$ORIG_PATH"
   unset FAKE_CODEX_MODE FAKE_CODEX_FILE FAKE_CODEX_LOGGED_IN FAKE_CODEX_USED5H FAKE_CODEX_USED7D \
         FAKE_CODEX_RESET5H FAKE_CODEX_RESET7D FAKE_CODEX_NO_RATES FAKE_CODEX_REJECT_EFFORT FAKE_CODEX_SLEEP \
+        FAKE_CODEX_REACHED FAKE_CODEX_CREDITS \
         AF_IGNORE_PANTRY
   export FAKE_CODEX_ARGS_LOG="$T/codex-args.log"
   PROJ="$T/proj"; mkdir -p "$PROJ"
@@ -106,6 +107,28 @@ t_lane_empty_budget_blocks() {
   code 3 && has "ChatGPT sack is empty"
   in_proj af-lane routine "$SPEC" --ignore-pantry
   code 0 && has "PANTRY: chatgpt empty"
+}
+t_lane_limit_flag_does_not_block_after_reset() {
+  # Codex said "limit reached", then the window reset. The gate must not block the only run that can
+  # record a fresh reading, or the sack stays "empty" forever.
+  FAKE_CODEX_USED5H=100 FAKE_CODEX_REACHED=rate_limit_reached FAKE_CODEX_RESET5H=$(( $(date +%s) - 30 )) \
+    in_proj af-lane routine "$SPEC" --ignore-pantry
+  in_proj af-lane routine "$SPEC"
+  code 0 && has "STATUS: complete" && has "unconfirmed since"
+}
+t_lane_limit_flag_blocks_while_current() {
+  FAKE_CODEX_USED5H=100 FAKE_CODEX_REACHED=rate_limit_reached in_proj af-lane routine "$SPEC" --ignore-pantry
+  in_proj af-lane routine "$SPEC"
+  code 3 && has "ChatGPT sack is empty"
+}
+t_lane_full_window_with_credits_runs() {
+  FAKE_CODEX_USED5H=100 FAKE_CODEX_CREDITS=40 in_proj af-lane routine "$SPEC"
+  in_proj af-lane routine "$SPEC"
+  code 0 && has "running on credits (balance 40)"
+}
+t_lane_that_commits_is_not_a_refusal() {
+  FAKE_CODEX_MODE=commit in_proj af-lane routine "$SPEC"
+  code 0 && has "STATUS: complete" && has "the lane committed" && has "created-by-fake.txt"
 }
 t_lane_tight_budget_warns() {
   FAKE_CODEX_USED5H=90 in_proj af-lane routine "$SPEC"

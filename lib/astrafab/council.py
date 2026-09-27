@@ -140,11 +140,13 @@ def recommend(task, cfg, models, lanes, budgets, runs, architect=None, today=Non
     reserve = (cfg.get("scoring") or {}).get("budget_reserve") or {}
     diversity = float((cfg.get("scoring") or {}).get("diversity_bonus", 0.5))
     today = today or _dt.date.today()
+    rows, excluded = [], []
     arch_vendor = None
     if architect:
         _, am = find_model({"models": models}, architect)
         arch_vendor = (am or {}).get("vendor")
-    rows, excluded = [], []
+        if not am:
+            excluded.append(("(architect %s)" % architect, "not on the Council, so no cross-vendor credit"))
     for mid, m in active(models).items():
         run = m.get("run")
         if run not in runs_on:

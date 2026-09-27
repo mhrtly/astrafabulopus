@@ -281,7 +281,7 @@ Built in a weekend to ship a handwriting game for eight-year-olds to the Mac App
 - An Astra consult took 8 seconds.
 - A 231-test Swift suite ran green through the verify lane.
 
-Version 0.2 is Spudnik's pass. It fixes the review lane and makes change detection honest, adds the Pantry and the Council, and adds a 50-plus-case test suite that runs every lane against a fake Codex on Linux and on the Mac's bash 3.2.
+Version 0.2 is Spudnik's pass. It fixes the review lane and makes change detection honest, adds the Pantry and the Council, and adds a 54-case test suite that runs every lane against a fake Codex on Linux and on the Mac's bash 3.2.
 
 ## Tests
 

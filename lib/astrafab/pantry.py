@@ -372,8 +372,24 @@ def evaluate(snap, at=None):
             reasons.append("%s %.0f%% used%s" % (w["name"], eff, (
                 ", resets %s" % core.local_clock(resets)) if resets and not w["reset_since_reading"] else ""))
     if snap.get("limit_reached"):
-        levels.append("empty")
-        reasons.insert(0, "limit reached (%s)" % snap["limit_reached"])
+        # Only a current reading can empty a sack. After a reset (or once the reading is stale) the
+        # flag is history: say so, but let the next lane run find out, since that run is also what
+        # records a fresh reading. Blocking here would block the only thing that can unblock it.
+        if snap["stale"] or any(w.get("reset_since_reading") for w in snap.get("windows", [])):
+            levels.append("tight")
+            reasons.insert(0, "limit was reached (%s) at the last reading; unconfirmed since" % snap["limit_reached"])
+        else:
+            levels.append("empty")
+            reasons.insert(0, "limit reached (%s)" % snap["limit_reached"])
+    credits = snap.get("credits") if isinstance(snap.get("credits"), dict) else {}
+    if "empty" in levels and (credits.get("unlimited") or credits.get("has_credits")):
+        # a full window with credits on the account keeps running, on credits
+        levels = ["tight" if lv == "empty" else lv for lv in levels]
+        for w in snap.get("windows", []):
+            if w.get("level") == "empty":
+                w["level"] = "tight"
+        reasons.insert(0, "window full, running on credits%s" % (
+            " (balance %s)" % credits["balance"] if credits.get("balance") is not None else ""))
     level = spud.worst(levels) if levels else "unknown"
     snap["level"] = level
     snap["reason"] = "; ".join(reasons) or ("no windows in reading" if not levels else "headroom everywhere")

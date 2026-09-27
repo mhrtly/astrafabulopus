@@ -65,6 +65,25 @@ class Evaluation(unittest.TestCase):
         s["limit_reached"] = "workspace_member_credits_depleted"
         self.assertEqual(pantry.evaluate(s)["level"], "empty")
 
+    def test_limit_flag_after_reset_is_not_empty(self):
+        s = self.snap(100, resets_in=-30)
+        s["limit_reached"] = "rate_limit_reached"
+        ev = pantry.evaluate(s)
+        self.assertEqual(ev["level"], "tight")
+        self.assertIn("unconfirmed", ev["reason"])
+
+    def test_limit_flag_on_stale_reading_is_not_empty(self):
+        s = self.snap(40, observed_ago=13 * 3600, resets_in=90000)
+        s["limit_reached"] = "rate_limit_reached"
+        self.assertEqual(pantry.evaluate(s)["level"], "tight")
+
+    def test_credits_keep_a_full_window_running(self):
+        s = self.snap(100)
+        s["credits"] = {"has_credits": True, "balance": "12"}
+        ev = pantry.evaluate(s)
+        self.assertEqual(ev["level"], "tight")
+        self.assertIn("credits", ev["reason"])
+
     def test_staleness(self):
         self.assertTrue(pantry.evaluate(self.snap(10, observed_ago=13 * 3600, resets_in=90000))["stale"])
 
@@ -174,6 +193,13 @@ class Council(unittest.TestCase):
         runs = [{"model": "gpt-6-luna", "kind": "lane", "verdict": "pass"} for _ in range(2)]
         adj, _ = council.observed_adjustment(m, council.observed(runs, "gpt-6-luna", m))
         self.assertLess(adj, 0.2)  # two lucky runs do not crown anybody
+
+    def test_model_names_claude_code_reports(self):
+        for key, want in (("claude-opus-5-5[1m]", "claude-opus-5-5"), ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
+                          ("Claude-Sonnet-5", "claude-sonnet-5"), ("opus", "claude-opus-5-5"), ("gpt-6-luna-pro", None)):
+            self.assertEqual(lanes.find_model(self.cfg, key)[0], want, key)
+        rows, _ = self.pick("complex", architect="claude-opus-5-5[1m]")
+        self.assertEqual(rows[0]["id"], "gpt-6-sol")
 
     def test_priors_are_sane(self):
         for mid, m in self.models.items():

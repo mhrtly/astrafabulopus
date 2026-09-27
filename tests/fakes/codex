@@ -4,12 +4,14 @@ exec header with `session id:`, --output-last-message, rollout files with token_
 `codex login status`, and clap's refusal to combine `review --uncommitted` with a prompt.
 
 Behaviour is steered by environment variables:
-  FAKE_CODEX_MODE      write (default) | noop | fail | sleep | edit-untracked | edit-modified | revert
+  FAKE_CODEX_MODE      write (default) | noop | fail | sleep | edit-untracked | edit-modified | revert | commit | solve
   FAKE_CODEX_FILE      file to create or edit, relative to --cd (default created-by-fake.txt)
   FAKE_CODEX_LOGGED_IN 1 (default) or 0
   FAKE_CODEX_USED5H / FAKE_CODEX_USED7D   used_percent to report (default 12.5 / 3.0)
   FAKE_CODEX_RESET5H / FAKE_CODEX_RESET7D  resets_at epoch seconds (default now+2h / now+4d)
   FAKE_CODEX_NO_RATES  1 = write token_count without rate_limits
+  FAKE_CODEX_REACHED   a rate_limit_reached_type to report (e.g. rate_limit_reached)
+  FAKE_CODEX_CREDITS   report purchased credits with this balance
   FAKE_CODEX_ARGS_LOG  append each invocation's argv (JSON) here
   FAKE_CODEX_REJECT_EFFORT  an effort to reject like an unsupported model would
 """
@@ -106,6 +108,11 @@ elif opts["sandbox"] == "read-only":
 elif mode in ("write", "edit-untracked", "edit-modified"):
     with open(target, "a") as fh:
         fh.write("spud %s\n" % sid)
+elif mode == "commit":  # a lane that ignores "do not commit"
+    with open(target, "a") as fh:
+        fh.write("committed spud %s\n" % sid)
+    os.system("git -C '%s' add -A >/dev/null 2>&1 && git -C '%s' -c user.name=f -c user.email=f@f commit -qm fake >/dev/null 2>&1"
+              % (opts["cd"], opts["cd"]))
 elif mode == "revert":
     os.system("git -C '%s' checkout -- . >/dev/null 2>&1" % opts["cd"])
 elif mode == "solve":  # the tryout fixture's reference solutions, so af-tryout's happy path is testable
@@ -150,7 +157,10 @@ if os.environ.get("FAKE_CODEX_NO_RATES") != "1":
                       "resets_at": int(float(os.environ.get("FAKE_CODEX_RESET7D", now + 4 * 86400)))},
         "credits": {"has_credits": False, "unlimited": False, "balance": None},
         "individual_limit": None, "spend_control_reached": None, "plan_type": "plus",
-        "rate_limit_reached_type": None}
+        "rate_limit_reached_type": os.environ.get("FAKE_CODEX_REACHED") or None}
+    if os.environ.get("FAKE_CODEX_CREDITS"):
+        payload["rate_limits"]["credits"] = {"has_credits": True, "unlimited": False,
+                                             "balance": os.environ["FAKE_CODEX_CREDITS"]}
 with open(path, "w") as fh:
     fh.write(json.dumps({"timestamp": stamp, "type": "session_meta",
                          "payload": {"session_id": sid, "id": sid, "originator": "codex_exec"}}) + "\n")

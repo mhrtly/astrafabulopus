@@ -43,7 +43,7 @@
   - temporary files are cleaned up;
   - `af-verify --timeout`;
   - `shasum` or `sha1sum`, whichever the OS has.
-- **A test suite.** `tests/run.sh` runs 50 cases against a fake Codex that mimics 0.157.1: the exec header, `--output-last-message`, rollout files with `token_count` and `rate_limits`, `login status`, and clap's review-argument conflict, so the review bug cannot come back quietly. CI runs it on Ubuntu (bash 5, GNU tools) and macOS (`/bin/bash` 3.2, BSD tools), with shellcheck, and checks that the Python runs on 3.9.
+- **A test suite.** `tests/run.sh` runs 54 cases against a fake Codex that mimics 0.157.1: the exec header, `--output-last-message`, rollout files with `token_count` and `rate_limits`, `login status`, and clap's review-argument conflict, so the review bug cannot come back quietly. CI runs it on Ubuntu (bash 5, GNU tools) and macOS (`/bin/bash` 3.2, BSD tools), with shellcheck, and checks that the Python runs on 3.9.
 
 ## Day-one evidence (September 26–27, 2026, Apple Silicon laptop)
 
@@ -62,7 +62,7 @@ One release run failed a single Vision test while LM Studio was loading a 29 GB 
 
 | Check | Result |
 |---|---|
-| `tests/run.sh` on Linux, bash 5 | 50 shell cases + 21 Python unit tests, all passing |
+| `tests/run.sh` on Linux, bash 5 | 54 shell cases + 25 Python unit tests, all passing |
 | Every Codex invocation the lanes make, parsed by the real Codex CLI 0.157.1 (no login) | `exec … -`, `exec --oss --local-provider …` and `exec … review -` all parse; the 0.1 review form fails with the conflict error above |
 | Codex rollout format | Read from the real 0.157.1 CLI: the file is named after the `session id:` printed in the exec header; `token_count` events carry `rate_limits` |
 | shellcheck 0.11 on all bash | clean |

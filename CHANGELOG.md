@@ -12,6 +12,7 @@
 - A flag given without its value (`--effort` at the end) is a usage error instead of an unbound-variable crash.
 - Temporary prompt and output files are cleaned up.
 - `af-verify` works on systems with `sha1sum` but no `shasum`.
+- A lane that commits its own work (specs say not to) is reported with the commit and its files, not as `refused`.
 
 ### Added
 - **The Pantry** (`af-pantry`, `af-statusline`). Live Claude and ChatGPT usage from the vendors' own meters: Codex session files, and Claude Code's status-line `rate_limits`. It adds pace projection ("dry in 3h"), pressure levels, routing advice, and manual entries for API credits. Lanes refuse to start on an empty sack. Lane reports carry `BUDGET:` (this run's share of each window) and `PANTRY:` lines. An experimental, opt-in poll of Claude's usage endpoint is included. See [docs/PANTRY.md](docs/PANTRY.md).
@@ -22,7 +23,7 @@
 - **Effort validation.** A rung Codex does not know is rejected before the run; a rung the Council has not seen a model accept gets a warning.
 - **Layered config.** `lanes.json` and `models.json` merge per lane, per model and per talent: plugin, then user, then project.
 - `af-verify --timeout`.
-- **Tests.** `tests/run.sh` runs 50 cases against a fake Codex, plus Python unit tests. CI covers Ubuntu, macOS with `/bin/bash` 3.2, shellcheck, and Python 3.9 compatibility.
+- **Tests.** `tests/run.sh` runs 54 cases against a fake Codex, plus Python unit tests. CI covers Ubuntu, macOS with `/bin/bash` 3.2, shellcheck, and Python 3.9 compatibility.
 - The orchestration skill gains "Mind the pantry" and "Ask the Council", and a `budget:` line in the ROUTE block.
 - Documentation rewritten by a potato.
 

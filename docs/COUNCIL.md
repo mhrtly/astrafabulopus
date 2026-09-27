@@ -78,7 +78,7 @@ The architect is taken from `--architect`, or else from the model the status-lin
 |---|---|---|
 | routine | GPT-6 Luna | implementation, speed and efficiency; the Tot |
 | complex | GPT-6 Sol (Astra close behind) | cross-vendor credit, and a fifth of Astra's price |
-| review | Fable 5.1 | review 10, architecture 10 |
+| review | GPT-6 Astra by 0.10 over Fable 5.1, flagged as a close call | cross-vendor credit vs Fable's review 10; the tie goes to the doctrine, so `fable-advisor` stays the final review and Astra becomes the release second opinion. Without an architect, Fable wins outright |
 | architect | Opus 5.5 | architecture and all-day efficiency |
 
 When budgets tighten, the picks move. On an empty ChatGPT sack, routine work goes to Sonnet 5. On a tight Claude sack, the codex lanes win more often.
