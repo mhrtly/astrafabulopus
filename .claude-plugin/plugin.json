@@ -1,0 +1,9 @@
+{
+  "name": "astrafabulopus",
+  "version": "0.1.0",
+  "description": "Architect-as-orchestrator for Claude Code that spends two subscriptions where each is smartest. Your session (Opus 5.5 day to day, Fable 5.1 for the hard calls) writes specs and verdicts; GPT Luna types, GPT Sol escalates, GPT Astra kibitzes occasionally, a local LM Studio model does free grunt work, and Fable 5.1 reviews every deliverable. Every lane runs through one deterministic script that reports changes from git, never from the model. An unhinged homage to Dan McAteer's astrable and fable-advisor.",
+  "author": { "name": "Mark Hartley", "url": "https://github.com/mhrtly" },
+  "homepage": "https://github.com/mhrtly/astrafabulopus",
+  "license": "MIT",
+  "keywords": ["agents", "model-routing", "orchestration", "architect", "codex", "fable", "opus", "astra", "sol", "luna", "lm-studio", "reasoning-effort"]
+}

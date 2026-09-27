@@ -1,0 +1,14 @@
+{
+  "name": "astrafabulopus",
+  "metadata": {
+    "description": "Two-subscription model routing for Claude Code: a Claude architect, GPT Luna/Sol/Astra lanes through the Codex CLI, an optional free LM Studio lane, and a mandatory Fable 5.1 review. Homage to Dan McAteer's astrable and fable-advisor."
+  },
+  "owner": { "name": "Mark Hartley", "url": "https://github.com/mhrtly" },
+  "plugins": [
+    {
+      "name": "astrafabulopus",
+      "source": "./",
+      "description": "Architect-as-orchestrator on your choice of Claude session model: specs and verdicts stay with the architect; GPT Luna does routine typing, GPT Sol takes hard one-offs, GPT Astra is the occasional frontier lane and second advisor, LM Studio is the free slow lane, and Fable 5.1 reviews every deliverable before it ships."
+    }
+  ]
+}
