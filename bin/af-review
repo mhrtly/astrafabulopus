@@ -1,0 +1,100 @@
+#!/bin/bash
+# af-review: a cross-vendor code review of this repository through the Codex CLI (the `review` lane).
+#
+#   af-review [--base BRANCH | --commit SHA] [--model SLUG] [--effort RUNG] [--root DIR] [--config PATH]
+#             [--native] [--ignore-pantry] [extra instructions…]
+#
+# Default scope is the uncommitted working tree. Read-only: it never edits or commits. By default the
+# review runs as custom instructions so it ends in the same VERDICT block as every other reviewer;
+# --native uses Codex's built-in review prompt instead (its own findings format). Codex refuses a
+# custom prompt together with --uncommitted/--base/--commit, which is why this does not pass both.
+# Feed its VERDICT/FINDINGS to fable-advisor as context for the final review.
+set -uo pipefail
+_af_src="$0"; while [ -L "$_af_src" ]; do _af_dir="$(cd -P "$(dirname "$_af_src")" && pwd)"; _af_src="$(readlink "$_af_src")"; case "$_af_src" in /*) ;; *) _af_src="$_af_dir/$_af_src" ;; esac; done
+AF_ROOT="$(cd -P "$(dirname "$_af_src")/.." && pwd)"; . "$AF_ROOT/lib/common.sh"
+TAB=$'\t'
+
+ROOT=""; CONFIG=""; MODEL_OVERRIDE=""; EFFORT_OVERRIDE=""; SCOPE="uncommitted"; SCOPE_ARG=""; EXTRA=""; NATIVE=""
+IGNORE_PANTRY="${AF_IGNORE_PANTRY:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base)   af_need "$1" $#; SCOPE="base"; SCOPE_ARG="$2"; shift 2 ;;
+    --commit) af_need "$1" $#; SCOPE="commit"; SCOPE_ARG="$2"; shift 2 ;;
+    --model)  af_need "$1" $#; MODEL_OVERRIDE="$2"; shift 2 ;;
+    --effort) af_need "$1" $#; EFFORT_OVERRIDE="$2"; shift 2 ;;
+    --root)   af_need "$1" $#; ROOT="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
+    --config) af_need "$1" $#; CONFIG="$2"; shift 2 ;;
+    --native) NATIVE=1; shift ;;
+    --ignore-pantry) IGNORE_PANTRY=1; shift ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) EXTRA="$EXTRA $1"; shift ;;
+  esac
+done
+command -v python3 >/dev/null 2>&1 || { echo "REVIEW: unavailable — python3 not found"; exit 3; }
+[ -n "$ROOT" ] || ROOT="$(af_py root)"
+CFG="$(af_py lane-config review --root "$ROOT" ${CONFIG:+--config "$CONFIG"})"
+if [ "${CFG%%"$TAB"*}" = "OK" ]; then
+  IFS="$TAB" read -r _ _PROVIDER CFG_MODEL CFG_EFFORT TIMEOUT _ENABLED _BASE CONFIG_DESC <<EOF2
+$CFG
+EOF2
+else
+  CFG_MODEL="gpt-6-sol"; CFG_EFFORT="high"; TIMEOUT=1200; CONFIG_DESC="(built-in default: ${CFG#*"$TAB"})"
+fi
+MODEL="${MODEL_OVERRIDE:-$CFG_MODEL}"; EFFORT="${EFFORT_OVERRIDE:-$CFG_EFFORT}"
+if ! MSG="$(af_preflight codex -)"; then echo "REVIEW: unavailable — $MSG"; exit 3; fi
+PANTRY_LINE="$(af_pantry_gate chatgpt)"
+if [ $? -eq 3 ] && [ -z "$IGNORE_PANTRY" ]; then echo "REVIEW: unavailable — the ChatGPT sack is empty (${PANTRY_LINE#PANTRY: }); --ignore-pantry to try anyway"; exit 3; fi
+
+LOG="$(af_logdir)/$(af_stamp)-review.log"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/af-review.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
+PROMPT="$WORK/prompt.md"; FINAL="$WORK/final.md"
+case "$SCOPE" in
+  uncommitted) WHAT="the uncommitted changes in this repository: staged, unstaged and untracked (run git status, git diff HEAD, and read new files)" ;;
+  base)        WHAT="the changes on this branch relative to $SCOPE_ARG (run git diff $SCOPE_ARG...HEAD, plus git status for anything uncommitted)" ;;
+  commit)      WHAT="the changes introduced by commit $SCOPE_ARG (run git show $SCOPE_ARG)" ;;
+esac
+cat > "$PROMPT" <<P
+Review $WHAT.
+
+Judge them against the project's own contracts (its AGENTS.md or CLAUDE.md), then for correctness,
+concurrency and state hazards, security-sensitive paths, and whether any docs or comments claim more
+than the verification evidence supports. Do not edit files. Return exactly:
+VERDICT: ship | fix-first | rethink
+REASON: <evidence-based>
+FINDINGS: <file:line — precise fix, or none>
+RESIDUAL RISK: <one line or none>
+${EXTRA:+
+Additional instructions:$EXTRA}
+P
+if [ -n "$NATIVE" ]; then
+  case "$SCOPE" in
+    uncommitted) SCOPE_FLAGS=(--uncommitted) ;;
+    base)        SCOPE_FLAGS=(--base "$SCOPE_ARG") ;;
+    commit)      SCOPE_FLAGS=(--commit "$SCOPE_ARG") ;;
+  esac
+  CMD=(codex exec -m "$MODEL" -c "model_reasoning_effort=$EFFORT" --sandbox read-only --skip-git-repo-check --cd "$ROOT" --output-last-message "$FINAL" review "${SCOPE_FLAGS[@]}")
+  : > "$WORK/empty"; STDIN_FILE="$WORK/empty"
+else
+  CMD=(codex exec -m "$MODEL" -c "model_reasoning_effort=$EFFORT" --sandbox read-only --skip-git-repo-check --cd "$ROOT" --output-last-message "$FINAL" review -)
+  STDIN_FILE="$PROMPT"
+fi
+af_py codex-now > "$WORK/budget-before.json" 2>/dev/null
+START=$(date +%s)
+{ echo "# $(date) review model=$MODEL effort=$EFFORT scope=$SCOPE $SCOPE_ARG native=${NATIVE:-no} config=$CONFIG_DESC"; echo "# ${CMD[*]}"; } > "$LOG"
+af_run_with_watchdog "$TIMEOUT" "$LOG" "$STDIN_FILE" review "${CMD[@]}"; RC=$?
+DURATION=$(( $(date +%s) - START ))
+SESSION="$(af_session_id "$LOG")"
+STATUS="complete"
+if grep -q '^# review: timeout' "$LOG"; then STATUS="timeout"
+elif [ "$RC" -ne 0 ] || [ ! -s "$FINAL" ]; then STATUS="failed"; fi
+RECORD="$(af_py record --kind review --lane review --provider codex --model "$MODEL" --effort "$EFFORT" \
+  --effort-source "$([ -n "$EFFORT_OVERRIDE" ] && echo flag || echo default)" --status "$STATUS" --exit "$RC" \
+  --duration "$DURATION" --session "$SESSION" --before "$WORK/budget-before.json" --root "$ROOT")"
+echo "REVIEW: $MODEL · effort $EFFORT · scope $SCOPE${SCOPE_ARG:+ $SCOPE_ARG} · ${DURATION}s · exit $RC · session ${SESSION:-unknown}"
+[ -n "$RECORD" ] && printf '%s\n' "$RECORD" | grep -v '^RUN:'
+[ -n "$PANTRY_LINE" ] && printf '%s\n' "$PANTRY_LINE"
+case "$STATUS" in
+  timeout) echo "STATUS: timeout"; echo "LOG: $LOG"; exit 5 ;;
+  failed)  echo "STATUS: failed"; grep -E 'ERROR|error:' "$LOG" | tail -4; echo "LOG: $LOG"; exit 1 ;;
+esac
+sed 's/^/  /' "$FINAL"; echo; echo "LOG: $LOG"

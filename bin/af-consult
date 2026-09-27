@@ -1,0 +1,79 @@
+#!/bin/bash
+# af-consult: a read-only, cross-vendor second opinion through the Codex CLI (the `consult` lane;
+# GPT Astra by default). Used by the astra-advisor agent.
+#
+#   af-consult <question-file> [--model SLUG] [--effort RUNG] [--root DIR] [--config PATH] [--ignore-pantry]
+#
+# The question states the decision or goal, the constraints and the options considered, or asks for a
+# review of the working tree (the model may run read-only commands such as git diff). Codex runs with
+# --sandbox read-only, so nothing can be edited. Exit 3 = unavailable, 5 = timeout, 1 = failed.
+set -uo pipefail
+_af_src="$0"; while [ -L "$_af_src" ]; do _af_dir="$(cd -P "$(dirname "$_af_src")" && pwd)"; _af_src="$(readlink "$_af_src")"; case "$_af_src" in /*) ;; *) _af_src="$_af_dir/$_af_src" ;; esac; done
+AF_ROOT="$(cd -P "$(dirname "$_af_src")/.." && pwd)"; . "$AF_ROOT/lib/common.sh"
+TAB=$'\t'
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+Q="${1:-}"; [ -n "$Q" ] && [ -f "$Q" ] || usage; shift
+ROOT=""; CONFIG=""; MODEL_OVERRIDE=""; EFFORT_OVERRIDE=""; IGNORE_PANTRY="${AF_IGNORE_PANTRY:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --model)  af_need "$1" $#; MODEL_OVERRIDE="$2"; shift 2 ;;
+    --effort) af_need "$1" $#; EFFORT_OVERRIDE="$2"; shift 2 ;;
+    --root)   af_need "$1" $#; ROOT="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
+    --config) af_need "$1" $#; CONFIG="$2"; shift 2 ;;
+    --ignore-pantry) IGNORE_PANTRY=1; shift ;;
+    *) echo "af-consult: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+command -v python3 >/dev/null 2>&1 || { echo "CONSULT: unavailable — python3 not found"; exit 3; }
+[ -n "$ROOT" ] || ROOT="$(af_py root)"
+CFG="$(af_py lane-config consult --root "$ROOT" ${CONFIG:+--config "$CONFIG"})"
+if [ "${CFG%%"$TAB"*}" != "OK" ]; then echo "CONSULT: unavailable — ${CFG#*"$TAB"}"; exit 3; fi
+IFS="$TAB" read -r _ _PROVIDER CFG_MODEL CFG_EFFORT TIMEOUT _ENABLED _BASE CONFIG_DESC <<EOF2
+$CFG
+EOF2
+MODEL="${MODEL_OVERRIDE:-$CFG_MODEL}"; EFFORT="${EFFORT_OVERRIDE:-$CFG_EFFORT}"
+if ! MSG="$(af_preflight codex -)"; then echo "CONSULT: unavailable — $MSG"; exit 3; fi
+PANTRY_LINE="$(af_pantry_gate chatgpt)"
+if [ $? -eq 3 ] && [ -z "$IGNORE_PANTRY" ]; then echo "CONSULT: unavailable — the ChatGPT sack is empty (${PANTRY_LINE#PANTRY: }); --ignore-pantry to try anyway"; exit 3; fi
+
+LOG="$(af_logdir)/$(af_stamp)-consult.log"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/af-consult.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
+PROMPT="$WORK/prompt.md"; FINAL="$WORK/final.md"
+{
+cat <<'PREAMBLE'
+Scope of this run: one read-only consultation requested by an orchestrating session. Answer it
+directly in this run; do not start an orchestration or delegation workflow and do not edit files.
+You may run read-only commands (git diff, git log, cat, rg) to look before you opine.
+
+Answer as a second-opinion advisor: give a verdict, not a survey; name the single risk that decides
+it; a sound plan gets one line; stay under 300 words. End with exactly:
+VERDICT: ship | fix-first | rethink   (or: do X | do Y, for a decision)
+REASON: <evidence-based>
+FINDINGS: <file:line — precise point, or none>
+RESIDUAL RISK: <one line or none>
+
+PREAMBLE
+cat "$Q"
+} > "$PROMPT"
+af_py codex-now > "$WORK/budget-before.json" 2>/dev/null
+START=$(date +%s)
+echo "# $(date) consult model=$MODEL effort=$EFFORT root=$ROOT question=$Q config=$CONFIG_DESC" > "$LOG"
+af_run_with_watchdog "$TIMEOUT" "$LOG" "$PROMPT" consult codex exec -m "$MODEL" -c "model_reasoning_effort=$EFFORT" --sandbox read-only --skip-git-repo-check --cd "$ROOT" --output-last-message "$FINAL" -
+RC=$?
+DURATION=$(( $(date +%s) - START ))
+SESSION="$(af_session_id "$LOG")"
+STATUS="complete"
+if grep -q '^# consult: timeout' "$LOG"; then STATUS="timeout"
+elif [ "$RC" -ne 0 ] || [ ! -s "$FINAL" ]; then STATUS="failed"; fi
+RECORD="$(af_py record --kind consult --lane consult --provider codex --model "$MODEL" --effort "$EFFORT" \
+  --effort-source "$([ -n "$EFFORT_OVERRIDE" ] && echo flag || echo default)" --status "$STATUS" --exit "$RC" \
+  --duration "$DURATION" --session "$SESSION" --before "$WORK/budget-before.json" --root "$ROOT")"
+echo "CONSULT: $MODEL · effort $EFFORT · ${DURATION}s · exit $RC · session ${SESSION:-unknown}"
+[ -n "$RECORD" ] && printf '%s\n' "$RECORD" | grep -v '^RUN:'
+[ -n "$PANTRY_LINE" ] && printf '%s\n' "$PANTRY_LINE"
+case "$STATUS" in
+  timeout) echo "STATUS: timeout"; echo "LOG: $LOG"; exit 5 ;;
+  failed)  echo "STATUS: failed"; grep -E 'ERROR|error:' "$LOG" | tail -4; echo "LOG: $LOG"; exit 1 ;;
+esac
+echo "ANSWER:"; sed 's/^/  /' "$FINAL"; echo; echo "LOG: $LOG"

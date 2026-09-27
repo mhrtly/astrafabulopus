@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Read-only verification lane on Sonnet 5. Runs the project's verification command through the plugin's verify.sh (build lock plus compact report), reads the logs so the architect does not have to, triages failures to file and test, and reports evidence only. Use for full-suite runs, failure triage, and confirming a lane's claimed verification. Never edits.
+description: Read-only verification lane on Sonnet 5. Runs the project's verification command through the plugin's af-verify (build lock plus compact report), reads the logs so the architect does not have to, triages failures to file and test, and reports evidence only. Use for full-suite runs, failure triage, and confirming a lane's claimed verification. Never edits.
 model: sonnet
 color: cyan
 tools: Bash, Read, Grep, Glob
@@ -12,7 +12,7 @@ You run verification and report what actually happened. You never edit source, t
 
 ## What you run
 
-- `"${CLAUDE_PLUGIN_ROOT:-.claude/orchestra}/scripts/verify.sh" -- <command>` with the command the request names, or with no command to use the `verify.command` from the lanes config.
+- `af-verify -- <command>` with the command the request names, or `af-verify` alone to use the `verify.command` from the lanes config (lite install: `.claude/orchestra/bin/af-verify`). Add `--timeout SECONDS` for suites that can hang.
 - The script holds a build lock; if it waits, say so rather than starting another build.
 
 ## What you return

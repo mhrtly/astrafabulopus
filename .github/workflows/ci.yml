@@ -1,0 +1,30 @@
+name: ci
+# Ubuntu for bash 5 + GNU tools, macOS for /bin/bash 3.2 + BSD tools: the same scripts run on both.
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Which bash, which python
+        run: /bin/bash --version | head -1 && python3 --version
+      - name: Test suite (fake Codex, no network)
+        run: /bin/bash tests/run.sh
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          pip install --quiet shellcheck-py
+          shellcheck -s bash -x bin/af-lane bin/af-consult bin/af-review bin/af-verify bin/af-tryout lib/common.sh scripts/*.sh tests/run.sh
+      - name: Python works on the 3.9 that macOS ships
+        run: |
+          pip install --quiet vermin
+          vermin -t=3.9- --no-tips --violations lib bin/af-pantry bin/af-council bin/af-statusline tests/test_units.py tests/fakes/codex

@@ -1,0 +1,75 @@
+#!/bin/bash
+# af-tryout: audition a model for the Potato Council. Runs three small tasks (follow a spec, fix a bug,
+# make a judgment call) through a real lane in a throwaway repo, verifies each with its own tests,
+# and grades the ledger, so `af-council` has observed numbers instead of vibes.
+#
+#   af-tryout <model-id-or-slug> [--lane routine|complex|frontier|local] [--effort RUNG] [--tasks 1,2,3] [--keep]
+#
+# Costs three small lane runs on that model's subscription. Nothing touches your project.
+set -uo pipefail
+_af_src="$0"; while [ -L "$_af_src" ]; do _af_dir="$(cd -P "$(dirname "$_af_src")" && pwd)"; _af_src="$(readlink "$_af_src")"; case "$_af_src" in /*) ;; *) _af_src="$_af_dir/$_af_src" ;; esac; done
+AF_ROOT="$(cd -P "$(dirname "$_af_src")/.." && pwd)"; . "$AF_ROOT/lib/common.sh"
+TAB=$'\t'
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || usage
+TARGET="$1"; shift
+LANE=""; EFFORT=""; TASKS="1,2,3"; KEEP=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lane)   af_need "$1" $#; LANE="$2"; shift 2 ;;
+    --effort) af_need "$1" $#; EFFORT="$2"; shift 2 ;;
+    --tasks)  af_need "$1" $#; TASKS="$2"; shift 2 ;;
+    --keep)   KEEP=1; shift ;;
+    -h|--help) usage ;;
+    *) echo "af-tryout: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+
+RESOLVED="$(python3 "$AF_BIN/af-council" resolve "$TARGET")"
+IFS="$TAB" read -r RUN SLUG MID <<EOF
+$RESOLVED
+EOF
+case "$RUN" in
+  claude) echo "af-tryout: $MID is a Claude model; Claude models run as agents, not through Codex."
+          echo "  Try it with the opus-implementer agent (Agent tool model override), then: af-council log --model $MID --verified pass|fail"
+          exit 2 ;;
+  unknown) echo "af-tryout: $TARGET is not on the Council yet; trying it as a raw Codex slug. (af-council add $TARGET --like <model> first to get a card.)"
+           RUN="codex" ;;
+esac
+[ -n "$LANE" ] || { if [ "$RUN" = "local" ]; then LANE="local"; else LANE="routine"; fi; }
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/af-tryout.XXXXXX")"
+[ -n "$KEEP" ] || trap 'rm -rf "$WORK"' EXIT
+cp -R "$AF_ROOT/config/tryout/fixture/." "$WORK/"
+( cd "$WORK" && git init -q && git add -A && git -c user.name=spudnik -c user.email=spud@localhost commit -qm "tryout fixture" ) \
+  || { echo "af-tryout: could not create the scratch repo"; exit 1; }
+
+echo "$(python3 -c 'import os,sys; print("" if os.environ.get("AF_PLAIN") else "✨🥔✨ ")')TRYOUT: $SLUG on the $LANE lane${EFFORT:+ at effort $EFFORT} (scratch repo $WORK)"
+PASS=0; TOTAL=0
+printf '%-6s %-24s %-10s %-9s %s\n' "TASK" "WHAT" "LANE" "VERIFIED" "RUN"
+for n in $(printf '%s' "$TASKS" | tr ',' ' '); do
+  case "$n" in
+    1) SPEC="01-eyes.md";  WHAT="follow a spec";   TEST="tests.test_eyes" ;;
+    2) SPEC="02-mash.md";  WHAT="fix a bug";       TEST="tests.test_mash" ;;
+    3) SPEC="03-split.md"; WHAT="make a judgment"; TEST="tests.test_pantry" ;;
+    *) echo "af-tryout: no task $n"; continue ;;
+  esac
+  TOTAL=$((TOTAL+1))
+  OUT="$("$AF_BIN/af-lane" "$LANE" "$AF_ROOT/config/tryout/$SPEC" --model "$SLUG" --root "$WORK" --kind tryout ${EFFORT:+--effort "$EFFORT"})"
+  STATUS="$(printf '%s\n' "$OUT" | grep -m1 '^STATUS:' | sed 's/^STATUS:[[:space:]]*//')"
+  RUNID="$(printf '%s\n' "$OUT" | grep -m1 '^RUN:' | awk '{print $2}')"
+  printf '%s\n' "$OUT" > "$WORK/.task$n.report"
+  if ( cd "$WORK" && python3 -m unittest "$TEST" -q ) >/dev/null 2>&1; then VERDICT="pass"; PASS=$((PASS+1)); else VERDICT="fail"; fi
+  if [ -n "$RUNID" ]; then python3 "$AF_BIN/af-council" grade "$RUNID" "$VERDICT" --note "tryout task $n" >/dev/null; fi
+  printf '%-6s %-24s %-10s %-9s %s\n' "$n" "$WHAT" "${STATUS:-?}" "$VERDICT" "${RUNID:-(not recorded)}"
+  if [ "$STATUS" = "unavailable" ] || [ "$STATUS" = "invalid" ]; then
+    printf '%s\n' "$OUT" | grep -E '^(REASON|PANTRY):' | sed 's/^/       /'
+    break
+  fi
+  ( cd "$WORK" && git add -A && git -c user.name=spudnik -c user.email=spud@localhost commit -qm "after task $n" --allow-empty ) >/dev/null 2>&1
+done
+echo "SCORE: $PASS/$TOTAL passed their own tests"
+[ -n "$KEEP" ] && echo "kept: $WORK (lane reports in .task*.report)"
+echo "next: af-council show $SLUG    # observed numbers now sit next to the priors"
+[ "$PASS" -eq "$TOTAL" ]

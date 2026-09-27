@@ -1,0 +1,172 @@
+{
+  "version": 2,
+  "_comment": "The Potato Council's roster. Talent is 0-10 and RELATIVE: a prior for routing, not a benchmark. Resolution: this file, then ~/.claude/astrafabulopus/models.json, then the project's .claude/orchestra/models.json, merged per model and per talent, so an overlay can re-rate one talent without restating a model. When a model ships: `af-council add NEW --like NEAREST --bump dim=+1`, then `af-tryout NEW` for observed numbers. Prices are API list $ per 1M tokens (input/cached/output); a subscription absorbs them, but they predict how fast a window drains. Priors last rated 2026-09-27 from the sources in each model's evidence list.",
+
+  "dimensions": {
+    "architecture":   "Judgment the spec cannot capture: decomposition, interfaces, trade-offs, knowing what not to build.",
+    "implementation": "Turning a complete six-part spec into correct, minimal code on the first try.",
+    "debugging":      "Hard bugs: concurrency, algorithms, flaky tests, the ones that resisted a first attempt.",
+    "review":         "Finding the real problem in a diff and giving a calibrated ship / fix-first / rethink.",
+    "speed":          "Turnaround for a typical lane run.",
+    "efficiency":     "Useful work per unit of budget: price times verbosity. 10 = barely dents a window."
+  },
+
+  "scoring": {
+    "_comment": "budget_reserve: the architect lives on the Claude subscription, so spending it on lane work costs a little extra. diversity_bonus: credit for a different vendor than the architect on complex, frontier, review and consult work, because a reviewer from the same family shares its blind spots.",
+    "budget_reserve": { "claude": 0.4, "chatgpt": 0.0, "local": 0.0 },
+    "diversity_bonus": 0.5
+  },
+
+  "tasks": {
+    "routine":    { "about": "The spec fully determines the outcome: wiring, CRUD, tests mirroring a pattern, docs.",
+                    "weights": { "implementation": 0.45, "speed": 0.25, "efficiency": 0.30 },
+                    "runs_on": ["codex", "claude", "local"], "effort": { "codex": "high", "claude": "medium" } },
+    "mechanical": { "about": "Renames, formatting, doc edits nobody is waiting on.",
+                    "weights": { "implementation": 0.30, "efficiency": 0.60, "speed": 0.10 },
+                    "runs_on": ["codex", "claude", "local"], "effort": { "codex": "medium", "claude": "low" } },
+    "complex":    { "about": "Judgment the spec cannot capture: concurrency, algorithms, security paths, hard debugging.",
+                    "weights": { "debugging": 0.35, "implementation": 0.30, "architecture": 0.15, "efficiency": 0.20 },
+                    "runs_on": ["codex", "claude"], "effort": { "codex": "high", "claude": "high" } },
+    "frontier":   { "about": "The hardest one-off, after two strong attempts failed.",
+                    "weights": { "architecture": 0.35, "debugging": 0.40, "implementation": 0.25 },
+                    "runs_on": ["codex", "claude"], "pressure_sensitivity": 0.5, "effort": { "codex": "xhigh", "claude": "max" } },
+    "review":     { "about": "Reading a diff against the goal and returning ship / fix-first / rethink.",
+                    "weights": { "review": 0.60, "architecture": 0.30, "efficiency": 0.10 },
+                    "runs_on": ["codex", "claude"], "pressure_sensitivity": 0.5, "effort": { "codex": "high" } },
+    "consult":    { "about": "A second opinion on an expensive-to-reverse decision.",
+                    "weights": { "architecture": 0.50, "review": 0.40, "efficiency": 0.10 },
+                    "runs_on": ["codex", "claude"], "pressure_sensitivity": 0.5, "effort": { "codex": "high" } },
+    "architect":  { "about": "The session model: all-day judgment, specs and verdicts.",
+                    "weights": { "architecture": 0.45, "review": 0.20, "implementation": 0.10, "efficiency": 0.15, "speed": 0.10 },
+                    "runs_on": ["claude"] }
+  },
+
+  "models": {
+    "claude-opus-5-5": {
+      "name": "Opus 5.5", "vendor": "anthropic", "run": "claude", "slug": "opus", "aliases": ["opus-5.5", "claude-opus-5.5"],
+      "released": "2026-09-22", "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 4, "cached": 0.20, "output": 20 },
+      "talent": { "architecture": 9.5, "implementation": 9.5, "debugging": 9.5, "review": 9.0, "speed": 6.5, "efficiency": 6.5 },
+      "spud": "Yukon Gold. Buttery, versatile, excellent at nearly everything. Suspiciously so. Was not allowed to vote on its own scores. Tried anyway.",
+      "notes": "Anthropic: 'performs at the level of Claude Fable 5.1 on most work', 40% cheaper and 30% faster than Opus 5, about half the tokens on a command-line benchmark. Adaptive thinking is always on. The default architect and the Claude build lane.",
+      "evidence": [
+        "Terminal-Bench 4.0 66.4%, FrontierCode v1.1 54.4%, CursorBench 4.0 57.8% (anthropic.com/claude-opus-5-5)",
+        "$4 / $0.20 / $20 per 1M (platform.claude.com/docs/en/about-claude/pricing)"
+      ],
+      "rated": "2026-09-27"
+    },
+    "claude-fable-5-1": {
+      "name": "Fable 5.1", "vendor": "anthropic", "run": "claude", "slug": "fable", "aliases": ["fable-5.1", "claude-fable-5.1"],
+      "released": "2026-09-01", "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 10, "cached": 0.25, "output": 50 },
+      "talent": { "architecture": 10, "implementation": 9.0, "debugging": 9.5, "review": 10, "speed": 4.0, "efficiency": 3.0 },
+      "spud": "Heirloom Purple Peruvian. Rare, expensive, profound. Served once, at the end of the meal: the final review.",
+      "notes": "Mythos-tier with extra safeguards; 'demanding reasoning and long-horizon agentic work' (Slower). Behind Opus 5.5 on the coding benchmarks Anthropic published, kept as the final reviewer for its clean-context judgment.",
+      "evidence": [
+        "Terminal-Bench 4.0 55.8%, FrontierCode v1.1 50.3%, CursorBench 4.0 51.8% (anthropic.com/claude-opus-5-5)",
+        "$10 / $0.25 / $50 per 1M (platform.claude.com pricing)"
+      ],
+      "rated": "2026-09-27"
+    },
+    "claude-sonnet-5": {
+      "name": "Sonnet 5", "vendor": "anthropic", "run": "claude", "slug": "sonnet", "aliases": ["sonnet-5"],
+      "released": "2026-06-30", "efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 2, "cached": 0.20, "output": 10 },
+      "talent": { "architecture": 8.0, "implementation": 8.5, "debugging": 8.0, "review": 8.0, "speed": 8.0, "efficiency": 7.5 },
+      "spud": "Russet. The dependable workhorse. Bakes, fries, mashes, never complains. Runs the lane wrappers and the verifier.",
+      "notes": "'Best combination of speed and intelligence' (Fast). $2/$10 made permanent. A Sonnet 5.5 is reportedly coming.",
+      "evidence": ["$2 / $0.20 / $10 per 1M (anthropic.com/news/claude-sonnet-5)"],
+      "rated": "2026-09-27"
+    },
+    "claude-haiku-4-5": {
+      "name": "Haiku 4.5", "vendor": "anthropic", "run": "claude", "slug": "haiku", "aliases": ["claude-haiku-4-5-20251001", "haiku-4.5"],
+      "released": "2025-10-15", "retires": "2026-10-15", "efforts": [], "default_effort": null,
+      "price": { "input": 1, "cached": 0.10, "output": 5 },
+      "talent": { "architecture": 5.5, "implementation": 6.5, "debugging": 5.5, "review": 5.5, "speed": 9.5, "efficiency": 8.0 },
+      "spud": "Fingerling. Tiny, fast, elegant, and retiring soon. Pour one out.",
+      "notes": "Retirement 'not sooner than October 15, 2026'. No effort levels (extended thinking instead). A Haiku 5.5 is reportedly coming.",
+      "evidence": ["SWE-bench Verified 73.3% (anthropic.com/news/claude-haiku-4-5)", "$1 / $0.10 / $5 per 1M"],
+      "rated": "2026-09-27"
+    },
+
+    "gpt-6-astra": {
+      "name": "GPT-6 Astra", "vendor": "openai", "run": "codex", "slug": "gpt-6-astra",
+      "released": "2026-09-04", "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"], "default_effort": "high",
+      "price": { "input": 10, "cached": 1.0, "output": 50 },
+      "talent": { "architecture": 9.0, "implementation": 9.0, "debugging": 9.5, "review": 9.0, "speed": 5.5, "efficiency": 4.0 },
+      "spud": "Sweet potato. Brilliant, expensive, and not technically a potato at all. The Council tolerates it. Barely. IT'S RIGHT THERE IN THE NAME.",
+      "notes": "OpenAI's 'most capable model, built for the hardest end-to-end work'. About 65% fewer output tokens than Opus 5, which softens the price. The occasional frontier lane and the cross-vendor second advisor.",
+      "evidence": [
+        "Terminal-Bench 4.0 57.9%, DeepSWE v1.1 74.1% (openai.com/index/gpt-6-astra)",
+        "$10 / $1 / $50 per 1M (developers.openai.com/api/docs/models/gpt-6-astra)"
+      ],
+      "rated": "2026-09-27"
+    },
+    "gpt-6-sol": {
+      "name": "GPT-6 Sol", "vendor": "openai", "run": "codex", "slug": "gpt-6-sol",
+      "released": "2026-09-22", "efforts": ["none", "low", "medium", "high", "xhigh", "max", "ultra"], "default_effort": "high",
+      "price": { "input": 2, "cached": 0.20, "output": 10 },
+      "talent": { "architecture": 8.0, "implementation": 8.5, "debugging": 8.5, "review": 8.0, "speed": 6.5, "efficiency": 7.5 },
+      "spud": "Red Bliss. Firm under heat, holds its shape in a hard stew. The escalation you can afford.",
+      "notes": "'Built to power complex coding and agentic workflows'; reportedly about half the mistakes of its predecessor. ultra is slow and adds Codex's own delegation: save it for twice-resisted problems.",
+      "evidence": [
+        "DeepSWE v1.1 68.8% at max (openai.com/index/introducing-gpt-6-sol-and-luna)",
+        "$2 / $0.20 / $10 per 1M (developers.openai.com/api/docs/models/gpt-6-sol)"
+      ],
+      "rated": "2026-09-27"
+    },
+    "gpt-6-luna": {
+      "name": "GPT-6 Luna", "vendor": "openai", "run": "codex", "slug": "gpt-6-luna",
+      "released": "2026-09-22", "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 0.10, "cached": 0.01, "output": 0.50 },
+      "talent": { "architecture": 6.5, "implementation": 8.0, "debugging": 7.0, "review": 6.5, "speed": 9.0, "efficiency": 10 },
+      "spud": "Tater Tot. Small, fast, absurdly cheap, and far better than it has any right to be. Never underestimate the tot.",
+      "notes": "'Most efficient model for focused, high-volume tasks'. Output is about 100x cheaper than Astra's. The default routine lane. OpenAI's guide lists ultra for Luna; fable-advisor reports Codex rejects it, so it is left out here.",
+      "evidence": [
+        "DeepSWE v1.1 66.6% at max (openai.com/index/introducing-gpt-6-sol-and-luna)",
+        "$0.10 / $0.01 / $0.50 per 1M (developers.openai.com/api/docs/models/gpt-6-luna)",
+        "created a file through the lane in 14 s (astrafabulopus day one, as GPT-5.6 Luna)"
+      ],
+      "rated": "2026-09-27"
+    },
+    "gpt-5.6-sol": {
+      "name": "GPT-5.6 Sol", "vendor": "openai", "run": "codex", "slug": "gpt-5.6-sol",
+      "released": "2026-07-09", "efforts": ["none", "low", "medium", "high", "xhigh", "max", "ultra"], "default_effort": "high",
+      "price": { "input": 4, "cached": 0.40, "output": 20 },
+      "talent": { "architecture": 7.5, "implementation": 8.0, "debugging": 8.0, "review": 7.5, "speed": 7.0, "efficiency": 5.5 },
+      "spud": "Last season's Red Bliss. Still good in a stew; costs more than the new crop.",
+      "notes": "Fallback if a login rejects the GPT-6 slugs (Codex 0.154 did; `codex update` fixed it).",
+      "evidence": ["SWE-Bench Pro 64.6%, DeepSWE v1.1 72.7% (openai.com/index/gpt-5-6)", "$4 / $0.40 / $20 per 1M (model page)"],
+      "rated": "2026-09-27"
+    },
+    "gpt-5.6-terra": {
+      "name": "GPT-5.6 Terra", "vendor": "openai", "run": "codex", "slug": "gpt-5.6-terra",
+      "released": "2026-07-09", "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 2, "cached": 0.20, "output": 12 },
+      "talent": { "architecture": 6.5, "implementation": 7.5, "debugging": 7.0, "review": 6.5, "speed": 7.5, "efficiency": 6.5 },
+      "spud": "Maris Piper. A solid middle-of-the-sack spud. Nobody's favorite, nobody's regret.",
+      "evidence": ["SWE-Bench Pro 63.4%, DeepSWE v1.1 69.6% (openai.com/index/gpt-5-6)", "$2 / $0.20 / $12 per 1M"],
+      "rated": "2026-09-27"
+    },
+    "gpt-5.6-luna": {
+      "name": "GPT-5.6 Luna", "vendor": "openai", "run": "codex", "slug": "gpt-5.6-luna",
+      "released": "2026-07-09", "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "default_effort": "high",
+      "price": { "input": 0.20, "cached": 0.02, "output": 1.20 },
+      "talent": { "architecture": 5.5, "implementation": 7.0, "debugging": 6.0, "review": 5.5, "speed": 8.5, "efficiency": 9.0 },
+      "spud": "The frozen tot. The old tot. Fine in a pinch, and it was there for us.",
+      "evidence": ["SWE-Bench Pro 62.7%, DeepSWE v1.1 67.2% (openai.com/index/gpt-5-6)", "$0.20 / $0.02 / $1.20 per 1M"],
+      "rated": "2026-09-27"
+    },
+
+    "qwen3.6-27b-mlx": {
+      "name": "Qwen 3.6 27B", "vendor": "qwen", "run": "local", "slug": "qwen3.6-27b-mlx", "aliases": ["qwen3.6-27b"],
+      "released": "2026-04", "efforts": ["low", "medium", "high"], "default_effort": "medium",
+      "price": { "input": 0, "cached": 0, "output": 0 },
+      "talent": { "architecture": 4.5, "implementation": 6.0, "debugging": 5.0, "review": 4.5, "speed": 2.0, "efficiency": 10 },
+      "spud": "Garden potato. Grown at home, costs nothing, slow to harvest. Smells like soil and freedom.",
+      "notes": "Through LM Studio via Codex's built-in provider. Local buys cost, not speed: 195 s for a task Luna did in 14 s on day one. Never run it during a build.",
+      "evidence": ["SWE-bench Verified 77.2 as reported by Qwen (huggingface.co/Qwen/Qwen3.6-27B), far slower on a laptop than any hosted lane"],
+      "rated": "2026-09-27"
+    }
+  }
+}

@@ -1,19 +1,19 @@
 {
-  "version": 1,
-  "_comment": "Default lanes for astrafabulopus. Resolution order: --config PATH, then ./.claude/orchestra/lanes.json in the project, then ~/.claude/astrafabulopus/lanes.json (written by /astrafabulopus:setup), then this file. Codex slugs verified 2026-09-27 on a ChatGPT-account login with Codex CLI 0.157.1: gpt-6-luna, gpt-6-sol and gpt-6-astra run; Codex 0.154 rejected the GPT-6 Luna/Sol slugs ('not supported when using Codex with a ChatGPT account'), so run `codex update` before falling back to the 5.6 slugs.",
+  "version": 2,
+  "_comment": "Default lanes for astrafabulopus. Layers merge per lane, lowest first: this file, then ~/.claude/astrafabulopus/lanes.json (written by /astrafabulopus:setup or `af-council promote`), then the project's .claude/orchestra/lanes.json. So a project can change one lane's effort without restating the rest. `--config PATH` on any af-* command uses that file alone. Codex slugs verified 2026-09-27 on a ChatGPT-account login with Codex CLI 0.157.1: gpt-6-luna, gpt-6-sol and gpt-6-astra run; Codex 0.154 rejected the GPT-6 Luna/Sol slugs ('not supported when using Codex with a ChatGPT account'), so run `codex update` before falling back to the 5.6 slugs. Model talents and prices live in models.json (the Potato Council).",
   "_candidates": ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"],
   "routine":  { "provider": "codex", "model": "gpt-6-luna",  "effort": "high", "timeout_seconds": 1500 },
   "complex":  { "provider": "codex", "model": "gpt-6-sol",   "effort": "high", "timeout_seconds": 2400 },
   "frontier": { "provider": "codex", "model": "gpt-6-astra", "effort": "high", "timeout_seconds": 2400,
-                "_note": "Occasional. After Sol and Opus both failed a task, or a deliberate one-off. Astra output is 5x Sol's API-equivalent price; the ChatGPT subscription absorbs it, but every Astra call is one the architect chose." },
+                "_note": "Occasional. After Sol and Opus both failed a task, or a deliberate one-off. Astra's output is 5x GPT-6 Sol's and 100x GPT-6 Luna's API-equivalent price; the ChatGPT subscription absorbs it, but every Astra call is one the architect chose." },
   "consult":  { "provider": "codex", "model": "gpt-6-astra", "effort": "high", "timeout_seconds": 900,
-                "_note": "Read-only cross-vendor advisor used by consult.sh and the astra-advisor agent. A trivial consult took 8 seconds." },
+                "_note": "Read-only cross-vendor advisor used by af-consult and the astra-advisor agent. A trivial consult took 8 seconds." },
   "review":   { "provider": "codex", "model": "gpt-6-sol",   "effort": "high", "timeout_seconds": 1200,
-                "_note": "Used by review.sh (codex review). Pass --model gpt-6-astra for a release review." },
+                "_note": "Used by af-review (codex exec review). Pass --model gpt-6-astra for a release review." },
   "local":    { "provider": "lmstudio", "model": "qwen3.6-27b-mlx", "effort": "medium", "timeout_seconds": 3600, "enabled": false,
                 "base_url": "http://localhost:1234/v1/models",
                 "_note": "Experimental and off. provider is lmstudio or ollama (base_url is only used for the reachability preflight). Verified 2026-09-26: Codex's built-in LM Studio provider completed a trivial write task with qwen3.6-27b-mlx in 195 s where GPT Luna took 14 s. A GGUF Qwen 3.5 35B-A3B failed under Codex because its chat template demands the system message first. Local buys cost, not speed." },
   "reviewer": { "provider": "anthropic", "model": "fable", "_note": "The fable-advisor agent pins this in its frontmatter; listed for reference." },
   "claude_builder": { "provider": "anthropic", "model": "opus", "effort": "high", "_note": "The opus-implementer agent pins this in its frontmatter; listed for reference." },
-  "verify":   { "command": "", "_note": "Optional: the project's full verification command, used by verify.sh when no command is given, e.g. \"swift test -c release\" or \"npm test\"." }
+  "verify":   { "command": "", "_note": "Optional: the project's full verification command, used by af-verify when no command is given, e.g. \"swift test -c release\" or \"npm test\"." }
 }

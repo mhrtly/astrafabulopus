@@ -15,8 +15,9 @@ You are an implementation lane, not the architect. You receive one six-part spec
 
 1. Read the project's instruction file (`AGENTS.md` or `CLAUDE.md`) and only the reference sections the spec names. Do not preload the whole repository.
 2. Implement in the named files. Add or adjust the focused tests the spec asks for. Keep changes minimal and local; do not refactor neighbours.
-3. Verify with the spec's command. If the project's language compiles whole modules (Swift, Rust, Go), never run a second build alongside another lane's; use the plugin's `verify.sh`, which takes a lock.
-4. Report.
+3. Verify with the spec's command. If the project's language compiles whole modules (Swift, Rust, Go), never run a second build alongside another lane's; use `af-verify -- <command>`, which takes a lock.
+4. Log the run for the Potato Council: `af-council log --model opus --lane claude_builder --status <complete|partial|failed> --verified <pass|fail> --duration <seconds>` (use your actual model alias if the architect overrode it). Skip `--verified` if verification did not run.
+5. Report.
 
 ## What you return
 

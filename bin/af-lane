@@ -1,0 +1,130 @@
+#!/bin/bash
+# af-lane: run ONE delegated spec through the Codex CLI and report what actually changed.
+#
+#   af-lane <routine|complex|frontier|local> <spec-file> [--effort RUNG] [--model SLUG] [--root DIR]
+#           [--config PATH] [--kind lane|tryout] [--ignore-pantry]
+#
+# Model and default effort come from lanes.json (plugin -> ~/.claude/astrafabulopus -> the project's
+# .claude/orchestra, merged per lane). A `REASONING: <rung>` line in the spec, or --effort, overrides
+# the default. CHANGED FILES come from content hashes of the working tree before and after the run,
+# never from the model's claims. Every run lands in the ledger with its tokens and the share of the
+# ChatGPT window it used, so the Potato Council learns who is actually good at what.
+#
+# Exit codes: 0 complete (pending YOUR verification), 4 refused (clean exit, no changes), 5 timeout,
+# 3 unavailable (no codex/login/server, lane disabled, or the budget is empty), 1 failed, 2 usage.
+#
+# Adapted with love from Dan McAteer's fable-advisor lanes (MIT, github.com/DannyMac180/fable-advisor).
+set -uo pipefail
+_af_src="$0"; while [ -L "$_af_src" ]; do _af_dir="$(cd -P "$(dirname "$_af_src")" && pwd)"; _af_src="$(readlink "$_af_src")"; case "$_af_src" in /*) ;; *) _af_src="$_af_dir/$_af_src" ;; esac; done
+AF_ROOT="$(cd -P "$(dirname "$_af_src")/.." && pwd)"; . "$AF_ROOT/lib/common.sh"
+TAB=$'\t'
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 2 ] || usage
+LANE="$1"; SPEC="$2"; shift 2
+ROOT=""; CONFIG=""; EFFORT_OVERRIDE=""; MODEL_OVERRIDE=""; KIND="lane"; IGNORE_PANTRY="${AF_IGNORE_PANTRY:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --effort) af_need "$1" $#; EFFORT_OVERRIDE="$2"; shift 2 ;;
+    --model)  af_need "$1" $#; MODEL_OVERRIDE="$2";  shift 2 ;;
+    --root)   af_need "$1" $#; ROOT="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
+    --config) af_need "$1" $#; CONFIG="$2"; shift 2 ;;
+    --kind)   af_need "$1" $#; KIND="$2"; shift 2 ;;
+    --ignore-pantry) IGNORE_PANTRY=1; shift ;;
+    -h|--help) usage ;;
+    *) echo "af-lane: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+[ -f "$SPEC" ] || { echo "af-lane: spec file not found: $SPEC" >&2; exit 2; }
+command -v python3 >/dev/null 2>&1 || { printf 'LANE REPORT\nLANE: %s\nSTATUS: unavailable\nREASON: python3 not found (xcode-select --install on a Mac)\n' "$LANE"; exit 3; }
+[ -n "$ROOT" ] || ROOT="$(af_py root)"
+
+LOG="$(af_logdir)/$(af_stamp)-$LANE.log"
+MODEL="?"; EFFORT="?"; EFFORT_SOURCE="?"; CONFIG_DESC="?"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/af-lane.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+report_early() { # $1 status, $2 reason
+  printf 'LANE REPORT\nLANE: %s · %s · effort %s (%s)\nSTATUS: %s\nREASON: %s\nCONFIG: %s\nLOG: %s\n' \
+    "$LANE" "$MODEL" "$EFFORT" "$EFFORT_SOURCE" "$1" "$2" "$CONFIG_DESC" "$LOG"
+}
+
+CFG="$(af_py lane-config "$LANE" --root "$ROOT" ${CONFIG:+--config "$CONFIG"})"
+if [ "${CFG%%"$TAB"*}" != "OK" ]; then report_early unavailable "${CFG#*"$TAB"}"; exit 3; fi
+IFS="$TAB" read -r _ PROVIDER CFG_MODEL CFG_EFFORT TIMEOUT ENABLED BASE_URL CONFIG_DESC <<EOF
+$CFG
+EOF
+MODEL="${MODEL_OVERRIDE:-$CFG_MODEL}"; EFFORT="$CFG_EFFORT"; EFFORT_SOURCE="default"
+SPEC_EFFORT="$(grep -m1 -E '^REASONING:' "$SPEC" | sed -E 's/^REASONING:[[:space:]]*//; s/[[:space:]].*$//')"
+if [ -n "$EFFORT_OVERRIDE" ]; then EFFORT="$EFFORT_OVERRIDE"; EFFORT_SOURCE="flag"
+elif [ -n "$SPEC_EFFORT" ]; then EFFORT="$SPEC_EFFORT"; EFFORT_SOURCE="spec"; fi
+[ "$ENABLED" = "true" ] || { report_early unavailable "lane '$LANE' is disabled in $CONFIG_DESC"; exit 3; }
+
+EFFORT_CHECK="$(af_py check-effort "$MODEL" "$EFFORT" --root "$ROOT")"; EC_RC=$?
+if [ "$EC_RC" -eq 2 ]; then report_early invalid "${EFFORT_CHECK#*"$TAB"}"; exit 2; fi
+if ! MSG="$(af_preflight "$PROVIDER" "$BASE_URL")"; then report_early unavailable "$MSG"; exit 3; fi
+
+BUDGET="chatgpt"; [ "$PROVIDER" = "codex" ] || BUDGET="local"
+PANTRY_LINE=""
+if [ "$BUDGET" = "chatgpt" ]; then
+  PANTRY_LINE="$(af_pantry_gate chatgpt)"; GATE_RC=$?
+  if [ "$GATE_RC" -eq 3 ] && [ -z "$IGNORE_PANTRY" ]; then
+    report_early unavailable "the ChatGPT sack is empty: ${PANTRY_LINE#PANTRY: chatgpt empty } (af-pantry; --ignore-pantry to try anyway)"
+    exit 3
+  fi
+fi
+
+PROMPT="$WORK/prompt.md"; FINAL="$WORK/final.md"
+{
+cat <<'PREAMBLE'
+Scope of this run: one implementation task, already planned and delegated by
+an orchestrating session. Implement it directly in this run. I explicitly opt
+out of starting an orchestration or delegation workflow for it. The model and
+reasoning effort for this run are the ones set on the command line.
+
+PREAMBLE
+cat "$SPEC"
+printf '\n\nRun the verification command and include its actual output in your final message.\n'
+} > "$PROMPT"
+
+af_py codex-now > "$WORK/budget-before.json" 2>/dev/null
+af_py snapshot "$ROOT" > "$WORK/before.snap"
+
+if [ "$PROVIDER" = "codex" ]; then
+  CMD=(codex exec -m "$MODEL" -c "model_reasoning_effort=$EFFORT" --sandbox workspace-write --skip-git-repo-check --cd "$ROOT" --output-last-message "$FINAL" -)
+else
+  CMD=(codex exec --oss --local-provider "$PROVIDER" -m "$MODEL" -c "model_reasoning_effort=$EFFORT" --sandbox workspace-write --skip-git-repo-check --cd "$ROOT" --output-last-message "$FINAL" -)
+fi
+START=$(date +%s)
+{ echo "# $(date) lane=$LANE provider=$PROVIDER model=$MODEL effort=$EFFORT ($EFFORT_SOURCE) root=$ROOT spec=$SPEC config=$CONFIG_DESC"; echo "# ${CMD[*]}"; } > "$LOG"
+af_run_with_watchdog "$TIMEOUT" "$LOG" "$PROMPT" lane "${CMD[@]}"; RC=$?
+DURATION=$(( $(date +%s) - START ))
+
+af_py snapshot "$ROOT" > "$WORK/after.snap"
+CHANGED="$(af_py changed "$WORK/before.snap" "$WORK/after.snap")"
+CHANGED_COUNT=0; [ -n "$CHANGED" ] && CHANGED_COUNT="$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
+STATUS="complete"; EXIT=0
+if grep -q '^# lane: timeout' "$LOG"; then STATUS="timeout"; EXIT=5
+elif [ "$RC" -ne 0 ]; then STATUS="failed"; EXIT=1
+elif [ -z "$CHANGED" ]; then STATUS="refused"; EXIT=4; fi
+SESSION="$(af_session_id "$LOG")"
+
+RECORD="$(af_py record --kind "$KIND" --lane "$LANE" --provider "$PROVIDER" --model "$MODEL" --effort "$EFFORT" \
+  --effort-source "$EFFORT_SOURCE" --status "$STATUS" --exit "$RC" --duration "$DURATION" \
+  --changed-count "$CHANGED_COUNT" --session "$SESSION" --before "$WORK/budget-before.json" --root "$ROOT")"
+
+printf 'LANE REPORT\nLANE: %s · %s · effort %s (%s)\nSTATUS: %s\nEXIT: %s  DURATION: %ss\nSESSION: %s\n' \
+  "$LANE" "$MODEL" "$EFFORT" "$EFFORT_SOURCE" "$STATUS" "$RC" "$DURATION" "${SESSION:-unknown}"
+[ -n "$RECORD" ] && printf '%s\n' "$RECORD"
+[ -n "$PANTRY_LINE" ] && printf '%s\n' "$PANTRY_LINE"
+case "$EFFORT_CHECK" in warn*) echo "WARN: ${EFFORT_CHECK#*"$TAB"}" ;; esac
+echo "CHANGED FILES (working-tree content before/after, not the model's claim):"
+if [ -n "$CHANGED" ]; then printf '%s\n' "$CHANGED" | sed 's/^/  /'; else echo "  (none)"; fi
+if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  DIFFSTAT="$(git -C "$ROOT" diff --stat 2>/dev/null | tail -8)"
+  echo "DIFFSTAT (whole working tree):"; if [ -n "$DIFFSTAT" ]; then printf '%s\n' "$DIFFSTAT" | sed 's/^/  /'; else echo "  (no changes to tracked files)"; fi
+fi
+echo "CONFIG: $CONFIG_DESC"; echo "LOG: $LOG"
+echo "FINAL MESSAGE:"
+if [ -s "$FINAL" ]; then sed 's/^/  /' "$FINAL"; echo; else echo "  (empty)"; grep -E 'ERROR|error:' "$LOG" | tail -5 | sed 's/^/  /'; fi
+[ "$STATUS" = "refused" ] && echo "NOTE: a clean exit with no file changes is a refusal, never a success. Quote the final message and re-spec."
+exit $EXIT

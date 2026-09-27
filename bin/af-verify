@@ -1,0 +1,65 @@
+#!/bin/bash
+# af-verify: run the project's verification behind a build lock and print a compact report.
+#
+#   af-verify [--name LABEL] [--no-lock] [--timeout SECONDS] [--root DIR] [--config PATH] -- <command…>
+#   af-verify                      # runs verify.command from lanes.json
+#
+# One lock per project root: whole-module languages (Swift, Rust, Go) cannot build twice at once in the
+# same output directory, so overlapping runs queue (up to 40 minutes) instead of corrupting each other.
+set -uo pipefail
+_af_src="$0"; while [ -L "$_af_src" ]; do _af_dir="$(cd -P "$(dirname "$_af_src")" && pwd)"; _af_src="$(readlink "$_af_src")"; case "$_af_src" in /*) ;; *) _af_src="$_af_dir/$_af_src" ;; esac; done
+AF_ROOT="$(cd -P "$(dirname "$_af_src")/.." && pwd)"; . "$AF_ROOT/lib/common.sh"
+
+ROOT=""; CONFIG=""; NAME=""; LOCKING=1; TIMEOUT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name)    af_need "$1" $#; NAME="$2"; shift 2 ;;
+    --no-lock) LOCKING=0; shift ;;
+    --timeout) af_need "$1" $#; TIMEOUT="$2"; shift 2 ;;
+    --root)    af_need "$1" $#; ROOT="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
+    --config)  af_need "$1" $#; CONFIG="$2"; shift 2 ;;
+    --) shift; break ;;
+    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "af-verify: unknown option $1 (put the command after --)" >&2; exit 2 ;;
+  esac
+done
+[ -n "$ROOT" ] || ROOT="$(af_py root)"
+if [ $# -eq 0 ]; then
+  CMDSTR="$(af_py verify-command --root "$ROOT" ${CONFIG:+--config "$CONFIG"})"
+  [ -n "$CMDSTR" ] || { echo "af-verify: no command given and no verify.command in lanes.json"; exit 2; }
+  set -- bash -lc "$CMDSTR"
+fi
+LOGDIR="$(af_logdir)"; mkdir -p "$(af_home)/locks"
+LOCK="$(af_home)/locks/$(printf '%s' "$ROOT" | af_hash).lock"; WAITED=0
+if [ "$LOCKING" -eq 1 ]; then
+  while ! mkdir "$LOCK" 2>/dev/null; do
+    OWNER="$(cat "$LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$OWNER" ] && ! kill -0 "$OWNER" 2>/dev/null; then rm -rf "$LOCK"; continue; fi
+    [ "$WAITED" -eq 0 ] && echo "af-verify: another build holds $LOCK (pid ${OWNER:-?}); waiting…"
+    sleep 10; WAITED=$((WAITED+10))
+    if [ "$WAITED" -ge 2400 ]; then echo "af-verify: gave up waiting for the build lock after 40 min"; exit 6; fi
+  done
+  echo $$ > "$LOCK/pid"; trap 'rm -rf "$LOCK"' EXIT
+fi
+LOG="$LOGDIR/$(af_stamp)-verify${NAME:+-$NAME}.log"; START=$(date +%s)
+echo "# $(date) verify root=$ROOT cmd: $*" > "$LOG"
+if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
+  : > "$LOG.stdin"
+  ( cd "$ROOT" && af_run_with_watchdog "$TIMEOUT" "$LOG" "$LOG.stdin" verify "$@" ); RESULT=$?
+  rm -f "$LOG.stdin"
+  grep -q '^# verify: timeout' "$LOG" && RESULT=124
+else
+  ( cd "$ROOT" && "$@" ) >> "$LOG" 2>&1 < /dev/null; RESULT=$?
+fi
+DURATION=$(( $(date +%s) - START ))
+echo "VERIFY REPORT"
+echo "COMMAND: $*"
+echo "EXIT: $RESULT  DURATION: ${DURATION}s"
+SUMMARY="$(grep -E -i "^[[:space:]]*(Executed [0-9]+ tests?|[0-9]+ passed|[0-9]+ (tests?|specs?) (passed|failed)|Tests?:|test result:|ok[[:space:]]+[0-9]+ tests?|Ran [0-9]+ tests?|PASS|FAIL|OK$|OK \()" "$LOG" | tail -3)"
+[ -n "$SUMMARY" ] && { echo "SUMMARY:"; printf '%s\n' "$SUMMARY" | sed 's/^/  /'; }
+if [ "$RESULT" -ne 0 ]; then
+  echo "FAILURES:"; grep -E "error:|error\[|FAIL|failed|panicked|Exception|AssertionError|Traceback|timeout after" "$LOG" | grep -v -i "warning" | head -12 | sed 's/^/  /'
+fi
+echo "LOG: $LOG"
+if [ "$RESULT" -eq 0 ]; then echo "VERDICT: PASS"; else echo "VERDICT: FAIL ($RESULT)"; fi
+exit $RESULT
