@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — 2026-09-28
+
+### Fixed
+- Base-scoped and uncommitted reviews now inspect staged, unstaged and untracked changes.
+- `af-verify` preserves project verification report lines in `DETAIL`, so agent evidence retains release-gate results.
+
+Found by a GPT-6 Sol review of the Scribal Warfare port.
+
 ## 0.2.0 — 2026-09-27 · "The Pantry and the Council"
 
 *Spudnik's pass. Holy hash browns and gravy, there was a lot in the sack.*

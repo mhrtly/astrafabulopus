@@ -17,8 +17,11 @@ You run verification and report what actually happened. You never edit source, t
 
 ## What you return
 
+Copy the `DETAIL:` block from `af-verify` verbatim into your report, including every project report
+line it contains. If verification fails, read the full log before triaging or reporting the failure.
+
 ```
-VERIFY REPORT (copy the script's EXIT/DURATION/VERDICT lines)
+VERIFY REPORT (copy the script's EXIT/DURATION/VERDICT lines and the DETAIL block verbatim)
 FAILURES: [test — file:line — one-line cause from the log, or "none"]
 NOT VERIFIED: [what this run cannot establish]
 LOG: [path]

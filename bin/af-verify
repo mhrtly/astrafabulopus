@@ -60,6 +60,12 @@ SUMMARY="$(grep -E -i "^[[:space:]]*(Executed [0-9]+ tests?|[0-9]+ passed|[0-9]+
 if [ "$RESULT" -ne 0 ]; then
   echo "FAILURES:"; grep -E "error:|error\[|FAIL|failed|panicked|Exception|AssertionError|Traceback|timeout after" "$LOG" | grep -v -i "warning" | head -12 | sed 's/^/  /'
 fi
+echo "DETAIL:"
+if grep -q '^VERIFY REPORT' "$LOG"; then
+  awk '/^VERIFY REPORT/{show=1} show' "$LOG"
+else
+  tail -15 "$LOG"
+fi
 echo "LOG: $LOG"
 if [ "$RESULT" -eq 0 ]; then echo "VERDICT: PASS"; else echo "VERDICT: FAIL ($RESULT)"; fi
 exit $RESULT

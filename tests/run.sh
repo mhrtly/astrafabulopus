@@ -163,6 +163,26 @@ t_review_custom_prompt_is_valid_codex() {
     && grep '"review"' "$FAKE_CODEX_ARGS_LOG" | grep -q '"-"' && ! grep -q -- '--uncommitted' "$FAKE_CODEX_ARGS_LOG" \
     || fail "custom review must pass the prompt on stdin without --uncommitted"
 }
+t_review_base_prompt_includes_uncommitted_work() {
+  mkdir -p "$T/capture-bin"
+  cat > "$T/capture-bin/codex" <<'SH'
+#!/bin/bash
+if [ "${1:-}" = exec ]; then
+  tee "$FAKE_CODEX_PROMPT_LOG" | "$FAKE_CODEX_BIN" "$@"
+else
+  exec "$FAKE_CODEX_BIN" "$@"
+fi
+SH
+  chmod +x "$T/capture-bin/codex"
+  export FAKE_CODEX_BIN="$REPO/tests/fakes/codex" FAKE_CODEX_PROMPT_LOG="$T/review-prompt.md"
+  export PATH="$T/capture-bin:$PATH"
+  in_proj af-review --base HEAD
+  code 0 && grep -qF 'git diff --cached' "$FAKE_CODEX_PROMPT_LOG" \
+    && grep -qF 'git diff,' "$FAKE_CODEX_PROMPT_LOG" \
+    && grep -qF 'git ls-files --others --exclude-standard' "$FAKE_CODEX_PROMPT_LOG" \
+    && grep -qF 'read untracked files as text when they are small text files' "$FAKE_CODEX_PROMPT_LOG" \
+    || fail "base review prompt must include staged, unstaged, and untracked work"
+}
 t_review_native_scope() {
   in_proj af-review --native --base main
   code 0 && grep -q '"review", "--base", "main"' "$FAKE_CODEX_ARGS_LOG" || fail "native review should pass --base main"
@@ -173,6 +193,16 @@ t_verify_pass_fail() {
   code 0 && has "VERDICT: PASS" && has "Ran 3 tests" || return 1
   in_proj af-verify -- sh -c 'echo "AssertionError: spud"; exit 1'
   code 1 && has "VERDICT: FAIL (1)" && has "AssertionError: spud"
+}
+t_verify_detail_preserves_project_report() {
+  in_proj af-verify -- sh -c 'printf "VERIFY REPORT\\nPACKAGE: built\\nCODESIGN: strict verification passed\\nVERDICT: PASS\\n"'
+  code 0 || return 1
+  DETAIL="$(printf '%s\n' "$OUT" | awk '/^DETAIL:/{show=1; next} show{print}')"
+  printf '%s\n' "$DETAIL" | grep -qFx 'VERIFY REPORT' \
+    && printf '%s\n' "$DETAIL" | grep -qFx 'PACKAGE: built' \
+    && printf '%s\n' "$DETAIL" | grep -qFx 'CODESIGN: strict verification passed' \
+    && printf '%s\n' "$DETAIL" | grep -qFx 'VERDICT: PASS' \
+    || fail "DETAIL must preserve the project's verification report"
 }
 t_verify_timeout() { in_proj af-verify --timeout 1 -- sleep 20; code 124 && has "VERDICT: FAIL (124)"; }
 t_verify_config_command() {
