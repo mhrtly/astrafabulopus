@@ -49,8 +49,8 @@ LOG="$(af_logdir)/$(af_stamp)-review.log"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/af-review.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
 PROMPT="$WORK/prompt.md"; FINAL="$WORK/final.md"
 case "$SCOPE" in
-  uncommitted) WHAT="the uncommitted changes in this repository: staged, unstaged and untracked (run git status, git diff HEAD, and read new files)" ;;
-  base)        WHAT="the changes on this branch relative to $SCOPE_ARG (run git diff $SCOPE_ARG...HEAD, plus git status for anything uncommitted)" ;;
+  uncommitted) WHAT="the uncommitted changes in this repository: inspect staged changes with git diff --cached, unstaged changes with git diff, and untracked files listed by git ls-files --others --exclude-standard (read untracked files as text when they are small text files)" ;;
+  base)        WHAT="the changes on this branch relative to $SCOPE_ARG: inspect committed changes with git diff $SCOPE_ARG...HEAD, staged changes with git diff --cached, unstaged changes with git diff, and untracked files listed by git ls-files --others --exclude-standard (read untracked files as text when they are small text files)" ;;
   commit)      WHAT="the changes introduced by commit $SCOPE_ARG (run git show $SCOPE_ARG)" ;;
 esac
 cat > "$PROMPT" <<P
