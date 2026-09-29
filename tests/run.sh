@@ -21,7 +21,7 @@ setup() {
   unset FAKE_CODEX_MODE FAKE_CODEX_FILE FAKE_CODEX_LOGGED_IN FAKE_CODEX_USED5H FAKE_CODEX_USED7D \
         FAKE_CODEX_RESET5H FAKE_CODEX_RESET7D FAKE_CODEX_NO_RATES FAKE_CODEX_REJECT_EFFORT FAKE_CODEX_SLEEP \
         FAKE_CODEX_REACHED FAKE_CODEX_CREDITS \
-        AF_IGNORE_PANTRY
+        AF_IGNORE_PANTRY TYPESAFE_API_KEY AF_JEV_ENDPOINT FAKE_OP_KEY FAKE_KEYCHAIN_KEY
   export FAKE_CODEX_ARGS_LOG="$T/codex-args.log"
   PROJ="$T/proj"; mkdir -p "$PROJ"
   ( cd "$PROJ" && git init -q && echo "# spud project" > README.md && git add -A \
@@ -316,6 +316,181 @@ t_council_log_manual_run() {
   run af-council log --model opus --status complete --verified pass --duration 120; code 0 || return 1
   run af-council show opus; has "1 run · 1/1 pass"
 }
+
+# ------------------------------------------------------------------------------- Jev advisory
+
+jev_tools() {
+  mkdir -p "$T/key-bin"
+  cat > "$T/key-bin/op" <<'SH'
+#!/bin/sh
+if [ -n "${FAKE_OP_KEY:-}" ]; then printf '%s' "$FAKE_OP_KEY"; else exit 1; fi
+SH
+  cat > "$T/key-bin/security" <<'SH'
+#!/bin/sh
+if [ -n "${FAKE_KEYCHAIN_KEY:-}" ]; then printf '%s' "$FAKE_KEYCHAIN_KEY"; else exit 1; fi
+SH
+  chmod +x "$T/key-bin/op" "$T/key-bin/security"
+  export PATH="$T/key-bin:$PATH"
+  export AF_JEV_ENDPOINT="https://stub.invalid/v1/systemone"
+  mkdir -p "$PROJ/.claude/orchestra"
+  cat > "$PROJ/.claude/orchestra/lanes.json" <<'JSON'
+{"jev":{"enabled":true,"key_ref":"op://vault/item/password","timeout_s":2}}
+JSON
+}
+jev_stub() {
+  JEV_MODE="$1"; JEV_COMMAND="$2"; shift 2
+  in_proj python3 "$REPO/tests/jev_stub.py" "$JEV_MODE" "$T/jev-body.json" "$T/jev-auth" \
+    "$JEV_COMMAND" "$SPEC" "$@"
+}
+jev_stop() { unset AF_JEV_ENDPOINT; }
+
+t_jev_request_shape_and_response() {
+  jev_tools || return 1
+  export TYPESAFE_API_KEY=env-key-sentinel
+  jev_stub ok decide --json
+  unset TYPESAFE_API_KEY
+  code 0 && has '"available": true' && has '"request_id": "header-request-id"' || { jev_stop; return 1; }
+  python3 - "$T/jev-body.json" "$T/jev-auth" "$SPEC" <<'PY' || { jev_stop; return 1; }
+import json, sys
+body = json.load(open(sys.argv[1]))
+assert body["model"] == "jev-latest"
+assert body["state"] == open(sys.argv[3]).read()
+assert set(body["questions"]) == {"lane", "effort", "spec_complete"}
+assert body["questions"]["lane"]["type"] == "choice"
+assert set(body["questions"]["effort"]["criteria"]) == {"medium", "high", "xhigh"}
+assert body["questions"]["spec_complete"]["type"] == "noul"
+assert "local" not in body["questions"]["lane"]["criteria"]
+assert open(sys.argv[2]).read() == "env"
+PY
+  hasnt "env-key-sentinel" && hasnt "PRIVATE LANE DESCRIPTION" || { jev_stop; return 1; }
+  if grep -qF 'env-key-sentinel' "$ASTRAFABULOPUS_HOME/ledger.jsonl"; then jev_stop; fail "Jev key leaked to ledger"; return 1; fi
+  python3 - "$ASTRAFABULOPUS_HOME/ledger.jsonl" <<'PY' || { jev_stop; return 1; }
+import json, sys
+entry = json.loads(open(sys.argv[1]).readline())
+assert entry["kind"] == "jev" and entry["model"] == "jev-test-1"
+assert entry["latency_ms"] >= 0 and entry["request_id"] == "header-request-id"
+assert entry["answers"]["lane"]["answer"] == "routine"
+assert entry["answers"]["lane"]["probability"] == 0.82
+assert entry["actual_choice"] is None and entry["run_grade"] is None
+PY
+  in_proj af-lane routine "$SPEC" >/dev/null 2>&1
+  in_proj af-council grade last pass --spec-complete no >/dev/null 2>&1
+  python3 - "$ASTRAFABULOPUS_HOME/ledger.jsonl" <<'PY' || { jev_stop; return 1; }
+import json, sys
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+decision = next(row for row in entries if row.get("kind") == "jev")
+lane = next(row for row in entries if row.get("kind") == "lane")
+outcome = next(row for row in entries if row.get("type") == "jev_outcome")
+assert lane["lane"] == "routine"
+assert outcome["decision"] == decision["id"]
+assert outcome["actual_choice"]["lane"] == "routine"
+assert outcome["actual_choice"]["effort"] == lane["effort"]
+assert outcome["run_grade"] == "pass"
+assert outcome["spec_complete"] == "no"
+PY
+  in_proj af-council --json ledger
+  code 0 && has '"match": "spec"' && has '"spec_complete": "no"' || { jev_stop; return 1; }
+  jev_stop
+}
+t_jev_metadata_key_echo_is_suppressed() {
+  jev_tools || return 1
+  export TYPESAFE_API_KEY=metadata-key-sentinel
+  jev_stub metadata-echo decide
+  unset TYPESAFE_API_KEY
+  code 0 && hasnt "metadata-key-sentinel" || { jev_stop; return 1; }
+  export TYPESAFE_API_KEY=metadata-key-sentinel
+  jev_stub metadata-echo decide --json
+  unset TYPESAFE_API_KEY
+  code 0 && hasnt "metadata-key-sentinel" || { jev_stop; return 1; }
+  if grep -qF 'metadata-key-sentinel' "$ASTRAFABULOPUS_HOME/ledger.jsonl"; then jev_stop; fail "Jev metadata key leaked to ledger"; return 1; fi
+  jev_stop
+}
+t_jev_matches_calibration_by_spec() {
+  jev_tools || return 1
+  SPEC_B="$T/spec-b.md"
+  printf 'Different spec B\n' > "$SPEC_B"
+  export TYPESAFE_API_KEY=calibration-key-sentinel
+  in_proj python3 "$REPO/tests/jev_stub.py" ok "$T/body-a" "$T/auth-a" decide "$SPEC" >/dev/null 2>&1
+  in_proj python3 "$REPO/tests/jev_stub.py" ok "$T/body-b" "$T/auth-b" decide "$SPEC_B" >/dev/null 2>&1
+  unset TYPESAFE_API_KEY
+  in_proj af-lane routine "$SPEC" >/dev/null 2>&1
+  in_proj af-council grade last pass >/dev/null 2>&1
+  python3 - "$ASTRAFABULOPUS_HOME/ledger.jsonl" <<'PY' || { jev_stop; return 1; }
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+decision_a, decision_b = [row for row in rows if row.get("kind") == "jev"]
+lane = next(row for row in rows if row.get("kind") == "lane")
+outcome = next(row for row in rows if row.get("type") == "jev_outcome")
+assert decision_a["spec_sha256"] == lane["spec_sha256"]
+assert outcome["decision"] == decision_a["id"] and outcome["decision"] != decision_b["id"]
+assert outcome["match"] == "spec"
+PY
+  jev_stop
+}
+t_jev_key_precedence() {
+  jev_tools || return 1
+  export TYPESAFE_API_KEY=env-key-sentinel FAKE_OP_KEY=op-key-sentinel FAKE_KEYCHAIN_KEY=keychain-key-sentinel
+  jev_stub ok decide >/dev/null 2>&1
+  RC=$?; [ "$RC" -eq 0 ] && [ "$(cat "$T/jev-auth")" = "env" ] || { jev_stop; fail "env key must win"; return 1; }
+  unset TYPESAFE_API_KEY
+  jev_stub ok decide >/dev/null 2>&1
+  RC=$?; [ "$RC" -eq 0 ] && [ "$(cat "$T/jev-auth")" = "op" ] || { jev_stop; fail "op key must precede Keychain"; return 1; }
+  unset FAKE_OP_KEY
+  jev_stub ok decide >/dev/null 2>&1
+  RC=$?; [ "$RC" -eq 0 ] && [ "$(cat "$T/jev-auth")" = "keychain" ] || { jev_stop; fail "Keychain key should be used last"; return 1; }
+  unset FAKE_KEYCHAIN_KEY
+  jev_stop
+}
+t_jev_unavailable_and_secret_safety() {
+  jev_tools
+  in_proj af-decide lane "$SPEC"; code 3 && has "no key found" || return 1
+  export TYPESAFE_API_KEY=$'trailing-key-sentinel\n'
+  jev_stub ok decide
+  unset TYPESAFE_API_KEY
+  code 0 && [ "$(cat "$T/jev-auth")" = "env" ] || { jev_stop; fail "trailing newline key should be trimmed"; return 1; }
+  export TYPESAFE_API_KEY=$'embedded-key-sentinel\r\n-tail'
+  jev_stub ok decide
+  unset TYPESAFE_API_KEY
+  code 3 && has "invalid key format" && hasnt "embedded-key-sentinel" || { jev_stop; return 1; }
+  if [ -f "$ASTRAFABULOPUS_HOME/ledger.jsonl" ] && grep -qF 'embedded-key-sentinel' "$ASTRAFABULOPUS_HOME/ledger.jsonl"; then jev_stop; fail "invalid env key leaked to ledger"; return 1; fi
+  export FAKE_OP_KEY=$'op-embedded-key-sentinel\r\n-tail'
+  jev_stub ok decide
+  unset FAKE_OP_KEY
+  code 3 && has "invalid key format" && hasnt "op-embedded-key-sentinel" || { jev_stop; return 1; }
+  if [ -f "$ASTRAFABULOPUS_HOME/ledger.jsonl" ] && grep -qF 'op-embedded-key-sentinel' "$ASTRAFABULOPUS_HOME/ledger.jsonl"; then jev_stop; fail "invalid op key leaked to ledger"; return 1; fi
+  export TYPESAFE_API_KEY=worker-key-sentinel
+  jev_stub value-error decide
+  unset TYPESAFE_API_KEY
+  code 3 && has "http error" && hasnt "worker-key-sentinel" || { jev_stop; return 1; }
+  export TYPESAFE_API_KEY=error-key-sentinel
+  jev_stub 500 decide
+  unset TYPESAFE_API_KEY
+  code 3 && has "http error" && hasnt "error-key-sentinel" || { jev_stop; return 1; }
+  hasnt "secret-looking server error" || { jev_stop; return 1; }
+  export TYPESAFE_API_KEY=redirect-key-sentinel
+  jev_stub 302 decide
+  unset TYPESAFE_API_KEY
+  code 3 && has "http error" && hasnt "redirect-key-sentinel" || { jev_stop; return 1; }
+  cat > "$PROJ/.claude/orchestra/lanes.json" <<'JSON'
+{"jev":{"enabled":true,"key_ref":"op://vault/item/password","timeout_s":0.1}}
+JSON
+  export TYPESAFE_API_KEY=timeout-key-sentinel
+  jev_stub timeout decide
+  unset TYPESAFE_API_KEY
+  code 3 && has "timeout" && hasnt "timeout-key-sentinel" || { jev_stop; return 1; }
+  if [ -f "$ASTRAFABULOPUS_HOME/ledger.jsonl" ] && grep -qE 'embedded-key-sentinel|op-embedded-key-sentinel|worker-key-sentinel|error-key-sentinel|timeout-key-sentinel|redirect-key-sentinel' "$ASTRAFABULOPUS_HOME/ledger.jsonl"; then jev_stop; fail "Jev key leaked to ledger"; return 1; fi
+  jev_stop
+}
+t_jev_council_recommend_is_advisory_and_opt_in() {
+  in_proj af-council recommend --spec "$SPEC"
+  code 0 && has "PICK for complex: Opus 5.5" && hasnt "Jev suggests" || { jev_stop; return 1; }
+  jev_tools || return 1
+  export TYPESAFE_API_KEY=council-key-sentinel
+  jev_stub ok council
+  unset TYPESAFE_API_KEY
+  code 0 && has "PICK for complex: Opus 5.5" && has "Jev suggests: routine/high (p=0.820)" || { jev_stop; return 1; }
+  jev_stop
+}
 t_tryout_happy_path() {
   FAKE_CODEX_MODE=solve run af-tryout gpt-6-luna
   code 0 && has "SCORE: 3/3" || return 1
@@ -329,8 +504,20 @@ t_tryout_rejects_claude_models() { run af-tryout opus; code 2 && has "run as age
 
 t_doctor() {
   run af-doctor
-  code 0 && has "SPUD CHECK" && has "lane routine" && has "codex login" || return 1
+  code 0 && has "SPUD CHECK" && has "lane routine" && has "codex login" && has "Jev" && has "disabled" || return 1
   run af-doctor --candidates; has "gpt-6-luna" || return 1
+  jev_tools
+  in_proj af-doctor --json
+  code 0 && has "key missing" || return 1
+  has '"what": "Jev"' && hasnt '"what": "lane jev"' || return 1
+  export TYPESAFE_API_KEY=doctor-env-sentinel
+  in_proj af-doctor --json
+  unset TYPESAFE_API_KEY
+  code 0 && has "key found via env" && hasnt "doctor-env-sentinel" || return 1
+  export FAKE_OP_KEY=doctor-key-sentinel
+  in_proj af-doctor --json
+  unset FAKE_OP_KEY
+  code 0 && has "key found via op" && hasnt "doctor-key-sentinel" || return 1
   FAKE_CODEX_LOGGED_IN=0 run af-doctor --strict; code 1
 }
 
@@ -344,6 +531,10 @@ for rel in ("config/lanes.json", "config/models.json", ".claude-plugin/plugin.js
     json.load(open(os.path.join(repo, rel)))
 plugin = json.load(open(os.path.join(repo, ".claude-plugin/plugin.json")))
 init = open(os.path.join(repo, "lib/astrafab/__init__.py")).read()
+marketplace = json.load(open(os.path.join(repo, ".claude-plugin/marketplace.json")))
+assert plugin["version"] == "0.3.0", "plugin version must be 0.3.0"
+assert marketplace["plugins"][0]["version"] == "0.3.0", "marketplace version must be 0.3.0"
+assert '__version__ = "0.3.0"' in init, "package version must be 0.3.0"
 assert '__version__ = "%s"' % plugin["version"] in init, "plugin.json and __init__ disagree on version"
 for d in ("agents", "commands", "skills/orchestration"):
     for name in os.listdir(os.path.join(repo, d)):

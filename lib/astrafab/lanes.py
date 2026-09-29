@@ -305,6 +305,12 @@ def cmd_record(args):
         "project": os.path.basename(args.root.rstrip("/")) if args.root else None,
         "tokens": tokens, "budget_delta": delta, "verdict": None,
     }
+    if args.spec_file:
+        try:
+            with open(args.spec_file, encoding="utf-8") as fh:
+                entry["spec_sha256"] = hashlib.sha256(fh.read().encode("utf-8")).hexdigest()[:12]
+        except (OSError, UnicodeError):
+            pass
     if args.note:
         entry["note"] = args.note
     try:
@@ -338,6 +344,7 @@ def main(argv=None):
     a.add_argument("--exit", type=int, default=0)
     a.add_argument("--duration", type=int, default=0)
     a.add_argument("--changed-count", type=int, default=0)
+    a.add_argument("--spec-file", default="")
     args = p.parse_args(argv)
     handlers = {"lane-config": cmd_lane_config, "verify-command": cmd_verify_command, "root": cmd_root,
                 "snapshot": cmd_snapshot, "changed": cmd_changed, "check-effort": cmd_check_effort,

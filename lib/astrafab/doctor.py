@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from . import __version__, core, council, pantry, spud
+from . import __version__, core, council, jev, pantry, spud
 from .lanes import find_model
 
 OK, WARN, BAD = "ok", "warn", "bad"
@@ -56,7 +56,21 @@ def checks(root):
         mcfg, models = {}, {}
         add(BAD, "council roster", str(exc))
 
+    try:
+        jev_settings = jev.config(root)
+        state, source = jev.key_status(jev_settings)
+        if state == "disabled":
+            add(OK, "Jev", "disabled (advisory quick decisions)")
+        elif state == "found":
+            add(OK, "Jev", "enabled · key found via %s" % source)
+        else:
+            add(WARN, "Jev", "enabled · key missing (TYPESAFE_API_KEY, 1Password, or Keychain)")
+    except (ValueError, jev.Unavailable):
+        add(WARN, "Jev", "configuration unavailable")
+
     for name, lane in lanes.items():
+        if name == "jev":
+            continue
         if not isinstance(lane, dict) or "model" not in lane or lane.get("provider") == "anthropic":
             continue
         mid, m = find_model(mcfg, lane["model"])

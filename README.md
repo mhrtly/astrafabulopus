@@ -217,6 +217,7 @@ Installed as a plugin, all of these are bare commands in Claude Code's Bash tool
 
 | Command | Does |
 |---|---|
+| `af-decide lane spec.md` | Optional, advisory Jev read of lane, effort, and spec completeness; disabled by default |
 | `af-lane <routine\|complex\|frontier\|local> spec.md` | Runs one spec through Codex. It adds the opt-out preamble and pins model and effort from `lanes.json` (a `REASONING:` line in the spec or `--effort` overrides them). It checks the ChatGPT sack and sandboxes Codex to the workspace under a watchdog. `CHANGED FILES` come from content hashes of the working tree, so edits to already-dirty or untracked files count too. A clean exit with no changes is `refused`. Exit codes: 0 complete, 4 refused, 5 timeout, 3 unavailable, 2 usage or invalid effort, 1 failed |
 | `af-consult question.md` | A read-only second opinion (Astra by default) that ends in a VERDICT block |
 | `af-review [--base main \| --commit SHA] [--native]` | Cross-vendor review of the working tree, ending in the same VERDICT block as every other reviewer |

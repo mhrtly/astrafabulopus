@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+Version 0.3.0 saves no tokens: it adds a cheap extra call while the architect and Council still decide; savings are only possible after calibration shows Jev's confident answers can be trusted.
+Live API smoke test: pending (request_id: pending).
+
+### Added
+- Optional TypeSafe Jev quick decisions for lane, effort, and spec completeness, with confidence labels and advisory-only behavior.
+- `af-decide`, layered Jev settings and secure key lookup, doctor status, and ledger labels for later calibration.
+- Jev setup and calibration guidance in [docs/JEV.md](docs/JEV.md).
+
 ## 0.2.1 — 2026-09-28
 
 ### Fixed
