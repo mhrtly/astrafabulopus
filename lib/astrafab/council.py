@@ -12,12 +12,13 @@ the lane to use. It informs the architect; it does not overrule the doctrine.
 """
 import argparse
 import datetime as _dt
+import fcntl
 import json
 import os
 import statistics
 import sys
 
-from . import core, pantry, spud
+from . import core, jev, pantry, spud
 from .lanes import find_model
 
 DIMS = ["architecture", "implementation", "debugging", "review", "speed", "efficiency"]
@@ -410,21 +411,63 @@ def cmd_promote(args, cfg, models):
 
 
 def cmd_grade(args):
+    # Keep pending-decision selection and outcome append in one critical section so
+    # concurrent graders cannot claim the same suggestion.
+    core.ensure_dir(core.af_home())
+    with open(core.ledger_path(), "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            return _cmd_grade_locked(args)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _cmd_grade_locked(args):
     runs = core.ledger_read()
     target = None
     if args.run == "last":
         for r in reversed(runs):
+            if r.get("kind") not in ("lane", "tryout", "manual", None):
+                continue
             if args.lane and r.get("lane") != args.lane:
                 continue
             target = r
             break
     else:
         target = next((r for r in runs if r.get("id") == args.run), None)
-    if not target:
+    if not target or target.get("kind") not in ("lane", "tryout", "manual", None):
         core.die("council: no run %r in the ledger" % args.run, 1)
+    prior = runs[:runs.index(target)]
+    linked_decision = next((r for r in reversed(runs)
+                            if r.get("kind") == "jev" and r.get("graded_run") == target["id"]), None)
+    pending = [r for r in prior if r.get("kind") == "jev" and not r.get("actual_choice")]
+    decision = linked_decision
+    match = None
+    if decision:
+        match = "spec" if target.get("spec_sha256") and decision.get("spec_sha256") == target.get("spec_sha256") else "fallback"
+    else:
+        decision = next((r for r in pending if r.get("id") == args.decision), None) if args.decision else None
+        if args.decision and not decision:
+            core.die("council: no ungraded Jev decision %r before this run" % args.decision, 1)
+        if not args.decision and pending:
+            decision = next((r for r in reversed(pending)
+                             if target.get("spec_sha256") and r.get("spec_sha256") == target.get("spec_sha256")), None)
+        if decision:
+            match = "spec" if target.get("spec_sha256") and decision.get("spec_sha256") == target.get("spec_sha256") else "fallback"
+        elif pending:
+            decision = pending[-1]
+            match = "fallback"
     core.ledger_append({"type": "grade", "run": target["id"], "verdict": args.verdict,
                         "note": args.note, "ts": core.iso()})
-    print("council: %s graded %s%s" % (target["id"], args.verdict, " — " + args.note if args.note else ""))
+    if decision:
+        core.ledger_append({"type": "jev_outcome", "decision": decision["id"], "run": target["id"],
+                            "actual_choice": {"lane": target.get("lane"), "effort": target.get("effort"),
+                                              "model": target.get("model")},
+                            "run_grade": args.verdict, "match": match,
+                            "spec_complete": args.spec_complete, "ts": core.iso()})
+    linked = " · linked Jev %s" % decision["id"] if decision else ""
+    print("council: %s graded %s%s%s" % (target["id"], args.verdict,
+                                          " — " + args.note if args.note else "", linked))
     return 0
 
 
@@ -485,7 +528,8 @@ def main(argv=None):
     sub.add_parser("roster", help="everyone on the Council (default)")
     a = sub.add_parser("show", help="one model's card"); a.add_argument("id")
     a = sub.add_parser("recommend", help="best model for a task, budget-aware")
-    a.add_argument("task"); a.add_argument("--architect", help="the architect's model, for cross-vendor credit")
+    a.add_argument("task", nargs="?"); a.add_argument("--architect", help="the architect's model, for cross-vendor credit")
+    a.add_argument("--spec", help="plain text spec for an optional Jev advisory suggestion")
     a.add_argument("--top", type=int, default=3)
     sub.add_parser("tasks", help="task classes and their weights")
     a = sub.add_parser("add", help="seat a new model, relative to one you know")
@@ -506,6 +550,8 @@ def main(argv=None):
     a = sub.add_parser("grade", help="record whether a run's work passed your verification")
     a.add_argument("run", help="run id from the LANE REPORT, or 'last'")
     a.add_argument("verdict", choices=["pass", "fail"]); a.add_argument("--lane"); a.add_argument("--note")
+    a.add_argument("--decision", help="Jev DECISION_ID to label with this run's actual choice and grade")
+    a.add_argument("--spec-complete", choices=["yes", "no"], help="record whether the spec was complete")
     a = sub.add_parser("log", help="record a run that did not go through af-lane (e.g. opus-implementer)")
     a.add_argument("--model", required=True); a.add_argument("--lane", default="claude_builder")
     a.add_argument("--status", default="complete"); a.add_argument("--effort")
@@ -560,24 +606,62 @@ def main(argv=None):
         return 0
     if cmd == "recommend":
         lanes, _ = core.load_lanes(args.root)
+        task = args.task or ("complex" if args.spec else None)
+        if not task:
+            core.die("council: give a task or --spec (which defaults the Council pick to complex)")
+        jev_result, jev_error, jev_id = None, None, None
+        try:
+            jev_settings = jev.config(args.root)
+        except jev.Unavailable as exc:
+            jev_settings = {"enabled": True}
+            jev_error = str(exc)
+        if args.spec and jev_settings.get("enabled") and not jev_error:
+            try:
+                with open(args.spec, encoding="utf-8") as fh:
+                    spec_text = fh.read()
+                jev_result = jev.request(spec_text, lanes, cfg, jev_settings)
+                jev_id = jev.log_suggestion(jev_result)
+            except (OSError, UnicodeError):
+                jev_error = "spec file cannot be read as text"
+            except jev.Unavailable as exc:
+                jev_error = str(exc)
         budgets = pantry.gather(refresh_codex=False)
         architect = args.architect or (budgets.get("claude") or {}).get("model_id")
         try:
-            rows, excluded = recommend(args.task, cfg, active(models), lanes, budgets, runs, architect)
+            rows, excluded = recommend(task, cfg, active(models), lanes, budgets, runs, architect)
         except KeyError:
-            core.die("council: unknown task %r (one of %s)" % (args.task, ", ".join(cfg.get("tasks") or {})))
+            core.die("council: unknown task %r (one of %s)" % (task, ", ".join(cfg.get("tasks") or {})))
+        jev_json = None
+        if jev_result:
+            jev_json = {"suggestion": jev_result["answers"], "model": jev_result["model"],
+                        "request_id": jev_result.get("request_id"), "latency_ms": jev_result["latency_ms"],
+                        "decision_id": jev_id}
+        elif jev_error:
+            jev_json = {"unavailable": jev_error}
         if args.json:
-            print(json.dumps({"task": args.task, "architect": architect, "ranking": rows,
-                              "excluded": excluded, "budget": pantry.brief(budgets)}, indent=2))
+            print(json.dumps({"task": task, "architect": architect, "ranking": rows,
+                              "excluded": excluded, "budget": pantry.brief(budgets), "jev": jev_json}, indent=2))
             return 0
         if not rows:
-            print("NO PICK for %s: every candidate is excluded." % args.task)
+            print("NO PICK for %s: every candidate is excluded." % task)
+            if jev_result:
+                lane = jev_result["answers"]["lane"]
+                effort = jev_result["answers"]["effort"]
+                print("Jev suggests: %s/%s (p=%.3f)" % (lane["answer"], effort["answer"], lane["probability"]))
+            elif jev_error:
+                print("Jev unavailable (%s)" % jev_error)
             for name, why in excluded:
                 print("  excluded: %s — %s" % (name, why))
             return 1
         top = rows[0]
-        print("PICK for %s: %s (score %.2f) → %s%s" % (args.task, top["name"], top["score"], top["how"],
+        print("PICK for %s: %s (score %.2f) → %s%s" % (task, top["name"], top["score"], top["how"],
                                                        " · effort %s" % top["effort"] if top.get("effort") else ""))
+        if jev_result:
+            lane = jev_result["answers"]["lane"]
+            effort = jev_result["answers"]["effort"]
+            print("Jev suggests: %s/%s (p=%.3f)" % (lane["answer"], effort["answer"], lane["probability"]))
+        elif jev_error:
+            print("Jev unavailable (%s)" % jev_error)
         if top["notes"]:
             print("  why: base %.2f; %s" % (top["base"], "; ".join(top["notes"])))
         if len(rows) > 1 and top["score"] - rows[1]["score"] < 0.25:

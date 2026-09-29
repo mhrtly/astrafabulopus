@@ -171,6 +171,15 @@ def ledger_read():
                     run["verdict"] = rec.get("verdict")
                     run["verdict_note"] = rec.get("note")
                 continue
+            if rec.get("type") == "jev_outcome":
+                decision = runs.get(rec.get("decision"))
+                if decision is not None and decision.get("kind") == "jev":
+                    decision["actual_choice"] = rec.get("actual_choice")
+                    decision["run_grade"] = rec.get("run_grade")
+                    decision["graded_run"] = rec.get("run")
+                    decision["match"] = rec.get("match")
+                    decision["spec_complete"] = rec.get("spec_complete")
+                continue
             rid = rec.get("id")
             if rid:
                 runs[rid] = rec

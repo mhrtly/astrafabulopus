@@ -1,6 +1,6 @@
 {
   "name": "astrafabulopus",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Architect-as-orchestrator for Claude Code that spends two subscriptions where each is smartest, and watches how much of each is left. Your session (Opus 5.5 day to day, Fable 5.1 for the hard calls) writes specs and verdicts; GPT Luna types, GPT Sol escalates, GPT Astra kibitzes, a local model does free grunt work, and Fable 5.1 reviews every deliverable. The Pantry reads live Claude and ChatGPT usage and reroutes before a sack runs dry; the Potato Council keeps sourced talent and token-efficiency priors plus observed results, so a new model is seated in minutes. Lovingly maintained by Spudnik, in homage to Dan McAteer's astrable and fable-advisor.",
   "author": {
     "name": "Mark Hartley",

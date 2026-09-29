@@ -110,7 +110,7 @@ SESSION="$(af_session_id "$LOG")"
 
 RECORD="$(af_py record --kind "$KIND" --lane "$LANE" --provider "$PROVIDER" --model "$MODEL" --effort "$EFFORT" \
   --effort-source "$EFFORT_SOURCE" --status "$STATUS" --exit "$RC" --duration "$DURATION" \
-  --changed-count "$CHANGED_COUNT" --session "$SESSION" --before "$WORK/budget-before.json" --root "$ROOT")"
+  --changed-count "$CHANGED_COUNT" --session "$SESSION" --before "$WORK/budget-before.json" --root "$ROOT" --spec-file "$SPEC")"
 
 printf 'LANE REPORT\nLANE: %s · %s · effort %s (%s)\nSTATUS: %s\nEXIT: %s  DURATION: %ss\nSESSION: %s\n' \
   "$LANE" "$MODEL" "$EFFORT" "$EFFORT_SOURCE" "$STATUS" "$RC" "$DURATION" "${SESSION:-unknown}"

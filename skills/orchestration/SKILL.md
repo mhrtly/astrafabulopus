@@ -58,6 +58,10 @@ Model slugs and default efforts live in the lanes config, merged per lane: the p
 - Implementation lanes grade their runs (`af-council grade <RUN> pass|fail`) after their own verification; `opus-implementer` logs its runs with `af-council log`. Grades move the scores, slowly and on purpose.
 - When a new model ships, run `/astrafabulopus:new-model`: seat it relative to the nearest model (`af-council add NEW --like OLD --bump dim=+1`), audition it with `af-tryout NEW` (three small tasks, real numbers), and `af-council promote NEW --lane <lane>` only if it earns it.
 
+## Ask Jev (advisory)
+
+When Jev is enabled, `af-decide lane SPEC.md` suggests an enabled lane, effort, and whether the spec is complete. Treat its probabilities as advice: the architect and Council decide, and Jev never controls a lane, review, or verification command. It sends only the supplied text spec; never send photos, secrets, or other file contents. Grade the resulting run so its suggestion can be calibrated later; see [docs/JEV.md](../../docs/JEV.md).
+
 ## Whole-module languages change the parallelism rule
 
 If the project's language compiles whole modules or crates (Swift, Rust, Go, Kotlin), a half-edited file in one lane breaks every other lane's build, and one shared build directory cannot be built twice at once. Then **implementation lanes run one at a time**; run in parallel only read-only work (Explore, reviews, research, copy), or give a second implementation lane its own git worktree and its own build directory. `af-verify` holds a per-project lock so overlapping runs queue instead of corrupting each other. Do not run the local lane while a build or test run is in progress: a loaded local model competes for memory and the GPU.

@@ -1,11 +1,14 @@
 """Unit tests for the Python core. Run by tests/run.sh with PYTHONPATH=lib."""
 import json
 import os
+import contextlib
+import io
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
-from astrafab import core, council, lanes, pantry
+from astrafab import core, council, jev, lanes, pantry
 
 
 class TimeParsing(unittest.TestCase):
@@ -153,6 +156,204 @@ class Layers(unittest.TestCase):
             self.assertEqual(lanes_merged["routine"], {"model": "x", "effort": "low", "timeout_seconds": 5})
             models_merged = core.merge_layers([a, b], depth=4)
             self.assertEqual(models_merged["models"]["m"], {"name": "M", "talent": {"speed": 9, "review": 2}})
+
+
+class Jev(unittest.TestCase):
+    def setUp(self):
+        self.lanes = {
+            "routine": {"model": "gpt-6-luna", "description": "Clear, routine work."},
+            "complex": {"model": "gpt-6-sol", "description": "Hard debugging."},
+            "frontier": {"model": "gpt-6-astra"},
+            "local": {"model": "qwen", "enabled": False},
+        }
+        self.cfg, _, _ = council.load(explicit=os.path.join(core.PLUGIN_ROOT, "config", "models.json"))
+
+    def test_question_shapes_and_disabled_lanes(self):
+        questions, available = jev.make_questions(self.lanes, self.cfg)
+        self.assertEqual(set(questions), {"lane", "effort", "spec_complete"})
+        self.assertEqual(set(questions["lane"]["criteria"]), {"routine", "complex", "frontier"})
+        self.assertEqual(set(questions["effort"]["criteria"]), {"medium", "high", "xhigh"})
+        self.assertEqual(questions["spec_complete"]["type"], "noul")
+        self.assertIn("implementation", questions["lane"]["criteria"]["routine"])
+        self.assertNotIn("local", available)
+
+    def test_parses_choice_and_noul_probabilities(self):
+        questions, _ = jev.make_questions(self.lanes, self.cfg)
+        response = {"answers": {
+            "lane": {"type": "choice", "choice": "complex", "probabilities": {"complex": 0.77}},
+            "effort": {"type": "choice", "choice": "high", "probabilities": {"high": 0.91}},
+            "spec_complete": {"type": "noul", "noul": 0.84},
+        }}
+        parsed = jev.parse_answers(response, questions)
+        self.assertEqual(parsed["lane"]["answer"], "complex")
+        self.assertEqual(parsed["lane"]["probability"], 0.77)
+        self.assertEqual(parsed["spec_complete"]["answer"], 0.84)
+
+    def test_rejects_invalid_probability(self):
+        questions, _ = jev.make_questions(self.lanes, self.cfg)
+        response = {"answers": {
+            "lane": {"type": "choice", "choice": "complex", "probabilities": {"complex": 2}},
+            "effort": {"type": "choice", "choice": "high", "probabilities": {"high": 0.9}},
+            "spec_complete": {"type": "noul", "noul": 0.8},
+        }}
+        with self.assertRaises(jev.Unavailable):
+            jev.parse_answers(response, questions)
+
+    def test_request_sends_fixed_criteria_and_refuses_redirect(self):
+        secret = "unit-key-sentinel"
+        self.lanes["routine"]["description"] = "PRIVATE LANE DESCRIPTION"
+        self.lanes["routine"]["_note"] = "PRIVATE NOTE"
+        self.cfg["models"]["gpt-6-luna"]["talent"] = {"architecture": 9}
+        seen, opens = [], []
+
+        class FakeOpener:
+            def __init__(self, handler):
+                self.handler = handler
+
+            def open(self, request, timeout=None):
+                opens.append(request)
+                seen.append(request.data.decode("utf-8"))
+                self.handler.redirect_request(request, None, 302, "Found", {}, "https://other.invalid")
+
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": secret}):
+            with patch("astrafab.jev.build_opener", side_effect=lambda handler: FakeOpener(handler)):
+                with self.assertRaises(jev.Unavailable) as raised:
+                    jev.request("SPEC BODY", self.lanes, self.cfg, {"enabled": True, "timeout_s": 1})
+        self.assertEqual(str(raised.exception), "http error")
+        self.assertEqual(len(opens), 1)
+        self.assertEqual(opens[0].get_header("Authorization"), "Bearer " + secret)
+        self.assertNotIn(secret, str(raised.exception) + " ".join(seen))
+        payload = json.loads(seen[0])
+        self.assertEqual(payload["state"], "SPEC BODY")
+        serialized = json.dumps(payload)
+        for private in ("PRIVATE LANE DESCRIPTION", "PRIVATE NOTE", "architecture"):
+            self.assertNotIn(private, serialized)
+
+    def test_rejects_plain_http_endpoint(self):
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "http-key-sentinel"}):
+            with patch("astrafab.jev.build_opener") as opener:
+                with self.assertRaises(jev.Unavailable):
+                    jev.request("spec", self.lanes, self.cfg,
+                                {"enabled": True, "endpoint": "http://127.0.0.1/test"})
+        opener.assert_not_called()
+
+    def test_resolved_key_is_trimmed_and_visible_ascii_only(self):
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "  visible-key-sentinel\n"}):
+            self.assertEqual(jev.resolve_key({}), ("visible-key-sentinel", "env"))
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "bad-key-sentinel\r\n-tail"}):
+            with self.assertRaises(jev.Unavailable) as raised:
+                jev.resolve_key({})
+        self.assertEqual(str(raised.exception), "invalid key format")
+        self.assertNotIn("bad-key-sentinel", str(raised.exception))
+
+    def test_worker_value_error_is_sanitized(self):
+        secret = "worker-key-sentinel"
+
+        class BrokenOpener:
+            def open(self, _request, timeout=None):
+                raise ValueError("Invalid header value: Bearer " + secret)
+
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": secret}):
+            with patch("astrafab.jev.build_opener", return_value=BrokenOpener()):
+                with self.assertRaises(jev.Unavailable) as raised:
+                    jev.request("spec", self.lanes, self.cfg, {"enabled": True, "timeout_s": 1})
+        self.assertEqual(str(raised.exception), "http error")
+        self.assertNotIn(secret, str(raised.exception))
+
+    def test_response_read_obeys_overall_deadline(self):
+        class SlowResponse:
+            headers = {}
+            fp = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def read1(self, _size):
+                time.sleep(0.05)
+                return b"x"
+
+        class SlowOpener:
+            def open(self, _request, timeout=None):
+                return SlowResponse()
+
+        started = time.monotonic()
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "slow-key-sentinel"}):
+            with patch("astrafab.jev.build_opener", return_value=SlowOpener()):
+                with self.assertRaises(jev.Unavailable) as raised:
+                    jev.request("spec", self.lanes, self.cfg, {"enabled": True, "timeout_s": 0.1})
+        self.assertEqual(str(raised.exception), "timeout")
+        self.assertLess(time.monotonic() - started, 0.6)
+
+    def test_ledger_merges_calibration_outcome(self):
+        with tempfile.TemporaryDirectory() as d:
+            previous = os.environ.get("ASTRAFABULOPUS_HOME")
+            os.environ["ASTRAFABULOPUS_HOME"] = d
+            try:
+                core.ledger_append({"id": "jev-1", "kind": "jev", "actual_choice": None, "run_grade": None})
+                core.ledger_append({"id": "lane-1", "kind": "lane", "lane": "routine", "effort": "high"})
+                core.ledger_append({"type": "jev_outcome", "decision": "jev-1", "run": "lane-1",
+                                    "actual_choice": {"lane": "routine", "effort": "high"}, "run_grade": "pass",
+                                    "match": "spec", "spec_complete": "no"})
+                rows = core.ledger_read()
+                decision = next(row for row in rows if row["id"] == "jev-1")
+                self.assertEqual(decision["actual_choice"]["lane"], "routine")
+                self.assertEqual(decision["run_grade"], "pass")
+                self.assertEqual(decision["match"], "spec")
+                self.assertEqual(decision["spec_complete"], "no")
+            finally:
+                if previous is None:
+                    os.environ.pop("ASTRAFABULOPUS_HOME", None)
+                else:
+                    os.environ["ASTRAFABULOPUS_HOME"] = previous
+
+    def test_grading_links_pending_jev_once_per_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            previous = os.environ.get("ASTRAFABULOPUS_HOME")
+            os.environ["ASTRAFABULOPUS_HOME"] = d
+            try:
+                for decision_id, spec_hash in (("jev-a", "aaaa"), ("jev-b", "bbbb")):
+                    core.ledger_append({"id": decision_id, "kind": "jev", "actual_choice": None,
+                                        "spec_sha256": spec_hash})
+                core.ledger_append({"id": "lane-a", "kind": "lane", "lane": "routine", "effort": "high",
+                                    "spec_sha256": "aaaa"})
+                core.ledger_append({"id": "lane-b", "kind": "lane", "lane": "routine", "effort": "high",
+                                    "spec_sha256": "cccc"})
+
+                def grade(run_id):
+                    args = type("Args", (), {"run": run_id, "lane": None, "decision": None,
+                                              "verdict": "pass", "note": None, "spec_complete": None})()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        council.cmd_grade(args)
+
+                grade("lane-a")
+                args = type("Args", (), {"run": "lane-a", "lane": None, "decision": None,
+                                          "verdict": "fail", "note": None, "spec_complete": "no"})()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    council.cmd_grade(args)
+                grade("lane-b")
+                rows = core.ledger_read()
+                decisions = [row for row in rows if row.get("kind") == "jev"]
+                self.assertEqual(len([row for row in decisions if row.get("graded_run")]), 2)
+                self.assertEqual(next(row for row in decisions if row["id"] == "jev-a")["run_grade"], "fail")
+                with open(core.ledger_path()) as ledger:
+                    outcomes = [json.loads(line) for line in ledger
+                                if '"type": "jev_outcome"' in line]
+                self.assertEqual(outcomes[0]["decision"], "jev-a")
+                self.assertEqual(outcomes[0]["match"], "spec")
+                self.assertEqual(outcomes[1]["match"], "spec")
+                self.assertEqual(outcomes[1]["spec_complete"], "no")
+                self.assertEqual(outcomes[2]["match"], "fallback")
+            finally:
+                if previous is None:
+                    os.environ.pop("ASTRAFABULOPUS_HOME", None)
+                else:
+                    os.environ["ASTRAFABULOPUS_HOME"] = previous
 
 
 class Snapshots(unittest.TestCase):
